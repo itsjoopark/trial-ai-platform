@@ -13,7 +13,8 @@
    and reduced-motion all come from the design system unchanged.
    ========================================================================== */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import AsciiBackground from "@/app/components/AsciiBackground";
 import type { TrialMatch, Criterion, Verdict } from "@/lib/types";
 
 /* ---- API response shapes ---- */
@@ -61,6 +62,7 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const appRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -182,14 +184,15 @@ export default function Page() {
   );
 
   return (
-    <div className="app">
+    <div className="app" ref={appRef}>
+      <AsciiBackground trackRef={appRef} />
       {header}
       {phase === "landing" && <Landing note={note} setNote={setNote} onRead={readNote} />}
       {phase === "capture" && (
         <Capture note={note} profile={profile} busy={busy} error={error} onRetry={() => readNote(note)} onContinue={toClarify} />
       )}
       {phase === "clarify" && profile && (
-        <Clarify profile={profile} step={step} answers={answers} onAnswer={answer} onBack={() => step > 0 && setStep(step - 1)} onSkip={() => answer("(skipped — flagged uncertain)")} />
+        <Clarify profile={profile} step={step} onAnswer={answer} onBack={() => step > 0 && setStep(step - 1)} onSkip={() => answer("(skipped — flagged uncertain)")} />
       )}
       {phase === "confirm" && profile && <Confirm profile={profile} answers={answers} onFind={findTrials} />}
       {phase === "reason" && <Reason busy={busy} error={error} onRetry={findTrials} />}
@@ -200,16 +203,74 @@ export default function Page() {
 
 /* ============================ phase views ================================= */
 
+function pickWelcomeGreeting(): string {
+  const hour = new Date().getHours();
+  const timeGreeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+
+  let returning = false;
+  try {
+    returning = !!localStorage.getItem("trial:visited");
+    localStorage.setItem("trial:visited", "1");
+  } catch {
+    // storage unavailable (private mode, etc.)
+  }
+
+  const pool = [
+    "Welcome",
+    timeGreeting,
+    "Good to see you",
+    "Ready when you are",
+    ...(returning ? (["Hey, you're back", "Welcome back"] as const) : []),
+  ];
+
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function Landing({ note, setNote, onRead }: { note: string; setNote: (s: string) => void; onRead: (s: string) => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [greeting, setGreeting] = useState("Welcome");
+  const [entered, setEntered] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setGreeting(pickWelcomeGreeting());
+    const id = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  async function handlePdfUpload(file: File) {
+    setPdfError(null);
+    setPdfBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/upload-pdf", { method: "POST", body: form });
+      const data = (await res.json()) as { text?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || "Could not read that PDF.");
+      const text = (data.text ?? "").trim();
+      if (!text) throw new Error("No readable text found in that PDF.");
+      setNote(text);
+      onRead(text);
+    } catch (e) {
+      setPdfError(errMsg(e));
+    } finally {
+      setPdfBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   return (
-    <div className="scroll">
-      <div className="col">
+    <div ref={scrollRef} className="scroll scroll--landing">
+      <div className="col landing-col">
         <div className="hero">
-          <div className="k">Coordinator screening · single patient</div>
-          <h1>Paste a patient&apos;s notes. I&apos;ll surface the trials they&apos;re eligible for — with the reasoning for every match.</h1>
+          <h1 className={entered ? "in" : undefined} suppressHydrationWarning>
+            {greeting}
+          </h1>
           <p>
-            Drop a messy note or describe the patient. I read it into a structured profile, ask only the questions that change a match, then
-            screen live against recruiting ClinicalTrials.gov studies and show the inclusion/exclusion call for each one.
+            Drop a messy note, upload a PDF, or describe the patient. I read it into a structured profile, ask only the questions that change a
+            match, then screen live against recruiting ClinicalTrials.gov studies and show the inclusion/exclusion call for each one.
           </p>
           <div className="paste">
             <textarea
@@ -226,10 +287,24 @@ function Landing({ note, setNote, onRead }: { note: string; setNote: (s: string)
             <div className="row">
               <span className="hint">⌘↵ to send</span>
               <span className="sp" />
-              <button className="btn go" onClick={() => onRead(note)}>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handlePdfUpload(file);
+                }}
+              />
+              <button className="btn" type="button" disabled={pdfBusy} onClick={() => fileRef.current?.click()}>
+                {pdfBusy ? "Reading PDF…" : "Upload PDF"}
+              </button>
+              <button className="btn go" disabled={pdfBusy} onClick={() => onRead(note)}>
                 Read the note →
               </button>
             </div>
+            {pdfError && <p className="paste-err">{pdfError}</p>}
           </div>
           <div className="chips">
             <button className="chip" onClick={() => onRead(SAMPLE_NOTE)}>
@@ -344,14 +419,12 @@ function Capture({
 function Clarify({
   profile,
   step,
-  answers,
   onAnswer,
   onBack,
   onSkip,
 }: {
   profile: Profile;
   step: number;
-  answers: Record<string, string>;
   onAnswer: (v: string) => void;
   onBack: () => void;
   onSkip: () => void;
@@ -367,17 +440,6 @@ function Clarify({
             <div className="who">Coordinating agent</div>
             <div>Profile&apos;s in. I only need the gaps that actually change which trials qualify:</div>
           </div>
-        </div>
-        <div className="qlist">
-          {list.map((q) => {
-            const a = answers[q.id];
-            return (
-              <div className={`qcard ${a ? "answered" : ""}`} key={q.id}>
-                <div className="q">{q.question}</div>
-                {a ? <div className="ans">✓ {a}</div> : <div className="await">Awaiting your answer…</div>}
-              </div>
-            );
-          })}
         </div>
         {c && <ClarifyCard c={c} step={step} total={list.length} onAnswer={onAnswer} onBack={onBack} onSkip={onSkip} />}
       </div>
@@ -549,8 +611,70 @@ function Reason({ busy, error, onRetry }: { busy: boolean; error: string | null;
   );
 }
 
+/* ---- preference controls: the patient-agency lever (transparent re-ranking) ---- */
+type PrefKey = "near" | "established" | "open" | "burden";
+const PREFS: { key: PrefKey; label: string; hint: string }[] = [
+  { key: "near", label: "Stay near home", hint: "prioritize a site close to the patient" },
+  { key: "established", label: "Established science", hint: "weight later-phase trials" },
+  { key: "open", label: "Avoid randomization / placebo", hint: "down-rank blinded or randomized designs" },
+  { key: "burden", label: "Lower burden", hint: "favor fewer visits and procedures (rough estimate)" },
+];
+
+function prefScore(m: TrialMatch, prefs: Set<PrefKey>): number {
+  let s = 0;
+  if (prefs.has("near")) s += m.factors.proximityScore * 2; // 0..6
+  if (prefs.has("established")) s += m.factors.phaseRank; // 0..4
+  if (prefs.has("open")) s += m.factors.randomized ? 0 : 3;
+  if (prefs.has("burden")) s += 2 - m.factors.burdenProxy; // 0..2
+  return s;
+}
+
+function prefReasons(m: TrialMatch, prefs: Set<PrefKey>): string[] {
+  const r: string[] = [];
+  if (prefs.has("near")) {
+    if (m.factors.proximityScore >= 3) r.push(`site in ${m.factors.nearestSite}`);
+    else if (m.factors.proximityScore === 2) r.push("a site in your state");
+  }
+  if (prefs.has("established") && m.factors.phaseRank >= 3) r.push(`later-phase (${m.phase})`);
+  if (prefs.has("open") && !m.factors.randomized) r.push("open-label, no randomization");
+  if (prefs.has("burden") && m.factors.burdenProxy === 0) r.push("observational — lower burden");
+  return r;
+}
+
 function Results({ data }: { data: MatchResponse }) {
-  const { counts, matches, conditionQuery, summary } = data;
+  const { counts, matches, conditionQuery } = data;
+  const [prefs, setPrefs] = useState<Set<PrefKey>>(new Set());
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+
+  const togglePref = (k: PrefKey) =>
+    setPrefs((p) => {
+      const n = new Set(p);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
+  const toggleSave = (nct: string) =>
+    setSaved((s) => {
+      const n = new Set(s);
+      if (n.has(nct)) n.delete(nct);
+      else n.add(nct);
+      return n;
+    });
+
+  const consider = matches.filter((m) => m.status === "eligible" || m.status === "uncertain");
+  const ruledOut = matches.filter((m) => m.status === "near");
+  const screened = matches.filter((m) => m.status === "screened");
+
+  // Preference re-ranking (agency) — transparent, over deterministic factors only.
+  const active = prefs.size > 0;
+  const ordered = active
+    ? [...consider].sort(
+        (a, b) => prefScore(b, prefs) - prefScore(a, prefs) || b.metCount / (b.total || 1) - a.metCount / (a.total || 1),
+      )
+    : consider;
+
+  const savedList = matches.filter((m) => saved.has(m.nctId));
+
   return (
     <div className="scroll">
       <div className="col">
@@ -559,14 +683,39 @@ function Results({ data }: { data: MatchResponse }) {
           <div className="body">
             <div className="who">Coordinating agent</div>
             <div className="summary">
-              {summary ? <>{summary} </> : null}
-              Screened <b>{counts.poolTotal} recruiting trials</b> for <span className="mono">{conditionQuery}</span>; reasoned over the top{" "}
-              <b>{counts.reasoned}</b>. <b>{counts.eligible} eligible</b>, {counts.uncertain} need info, {counts.near} near-miss (fails closed).
-              Every call is shown against its criterion.
+              Screened <b>{counts.poolTotal} recruiting trials</b> for <span className="mono">{conditionQuery}</span> and reasoned over the top{" "}
+              <b>{counts.reasoned}</b>. Here are the ones worth discussing with the care team — <b>{counts.eligible} eligible</b>, {counts.uncertain}{" "}
+              that need info. Nothing here is a recommendation; it&apos;s to help weigh the options and know what to ask.
               <span className="live-flag">live · clinicaltrials.gov</span>
             </div>
           </div>
         </div>
+
+        <div className="prefs">
+          <div className="prefs-h">What matters most to this patient?</div>
+          <div className="prefs-row">
+            {PREFS.map((p) => (
+              <button key={p.key} className={`pref ${prefs.has(p.key) ? "on" : ""}`} title={p.hint} onClick={() => togglePref(p.key)}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {active && <div className="prefs-note">Re-ordered by these priorities — based on trial facts, not a recommendation.</div>}
+        </div>
+
+        {savedList.length > 0 && (
+          <div className="tray">
+            <span className="tray-h">To discuss ({savedList.length})</span>
+            {savedList.map((m) => (
+              <span key={m.nctId} className="tray-chip mono">
+                {m.nctId}
+                <button onClick={() => toggleSave(m.nctId)} aria-label={`remove ${m.nctId}`}>
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="counts">
           <span className="count eligible">
@@ -576,71 +725,136 @@ function Results({ data }: { data: MatchResponse }) {
             <b>{counts.uncertain}</b> to confirm
           </span>
           <span className="count near">
-            <b>{counts.near}</b> near-miss
+            <b>{counts.near}</b> ruled out
           </span>
           <span className="count">
             <b>{counts.screened}</b> screened
           </span>
         </div>
 
-        <div className="mcount">
-          Ranked by criteria met · {counts.reasoned} of {counts.poolTotal} deeply reasoned this pass
-        </div>
-
-        {matches.filter((m) => m.status !== "screened").map((m) => (
-          <MatchCard key={m.nctId} m={m} />
+        {ordered.map((m) => (
+          <DecisionCard key={m.nctId} m={m} saved={saved.has(m.nctId)} onSave={() => toggleSave(m.nctId)} reasons={active ? prefReasons(m, prefs) : []} />
         ))}
 
-        {matches.some((m) => m.status === "screened") && (
+        {ruledOut.length > 0 && (
           <>
-            <div className="screened-note">
-              Screened — matched the condition and recruiting filters, not yet reasoned in this pass. Raise the reasoning depth to include them.
+            <div className="section-h">
+              Ruled out <span>— listed in full, fails closed</span>
             </div>
-            {matches.filter((m) => m.status === "screened").map((m) => (
-              <MatchCard key={m.nctId} m={m} />
+            {ruledOut.map((m) => (
+              <DecisionCard key={m.nctId} m={m} saved={saved.has(m.nctId)} onSave={() => toggleSave(m.nctId)} reasons={[]} />
             ))}
           </>
         )}
+
+        {screened.length > 0 && (
+          <>
+            <div className="section-h">
+              Screened <span>— matched the condition &amp; recruiting filters, not deeply reasoned this pass</span>
+            </div>
+            <div className="screened-list">
+              {screened.map((m) => (
+                <a key={m.nctId} className="screened-row" href={m.url} target="_blank" rel="noopener noreferrer">
+                  <span className="mono">{m.nctId}</span>
+                  <span className="sr-title">{m.title}</span>
+                  <span className="mono sr-phase">{m.phase}</span>
+                </a>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div className="disclaimer" style={{ marginTop: 20 }}>
+          Informational decision support for review with a care team — not medical advice, and it does not choose for you. Trial data is live from
+          ClinicalTrials.gov; synthetic personas only, no real patient data.
+        </div>
       </div>
     </div>
   );
 }
 
-/* ---- one trial + its criterion ledger (the signature component) ---- */
+/* ---- one trial as a decision card: brief-first, ledger grouped behind an accordion ---- */
 
-function MatchCard({ m }: { m: TrialMatch }) {
-  const label =
-    m.status === "eligible" ? "Eligible" : m.status === "near" ? "Near-miss" : m.status === "uncertain" ? "Needs info" : "Screened";
-  const lead = m.status === "eligible";
-  const n = m.locations.length;
-  const first = m.locations[0];
-  const place = first ? [first.city, first.state].filter(Boolean).join(", ") || first.country : "";
-  const locs = n === 0 ? "Location TBD" : `${n} site${n > 1 ? "s" : ""}${place ? ` · ${place}` : ""}`;
+function DecisionCard({ m, saved, onSave, reasons }: { m: TrialMatch; saved: boolean; onSave: () => void; reasons: string[] }) {
+  const label = m.status === "eligible" ? "Eligible" : m.status === "uncertain" ? "Needs info" : "Ruled out";
+  const near = m.status === "near";
+  const tally = ledgerTally(m.criteria);
 
   return (
-    <div className={`match ${lead ? "lead" : ""} ${m.status === "screened" ? "screened" : ""}`}>
-      <div className="mh">
-        <div>
-          <div className="nct">{m.nctId}</div>
+    <div className={`dcard ${m.status}`}>
+      <div className="dc-head">
+        <div className="dc-title">
+          <a className="nct" href={m.url} target="_blank" rel="noopener noreferrer">
+            {m.nctId} ↗
+          </a>
           <div className="mt">{m.title}</div>
         </div>
-        <span className={`vbadge ${badgeClass(m.status)}`}>{label}</span>
+        <div className="dc-actions">
+          <span className={`vbadge ${badgeClass(m.status)}`}>{label}</span>
+          <button className={`save ${saved ? "on" : ""}`} onClick={onSave}>
+            {saved ? "★ Saved" : "☆ Save to discuss"}
+          </button>
+        </div>
       </div>
+
+      {reasons.length > 0 && <div className="why">▲ moved up: {reasons.join(" · ")}</div>}
 
       {m.headline && <div className="headline">{m.headline}</div>}
 
+      {!near && m.brief && (
+        <>
+          <div className="brief">
+            <div className="bcol offer">
+              <div className="bk">Could offer</div>
+              <div className="bv">{m.brief.offers}</div>
+            </div>
+            <div className="bcol ask">
+              <div className="bk">Asks of you</div>
+              <div className="bv">{m.brief.commitment}</div>
+            </div>
+            <div className="bcol unc">
+              <div className="bk">Still uncertain</div>
+              <div className="bv">{m.brief.uncertainty}</div>
+            </div>
+          </div>
+          {m.brief.questionsToAsk.length > 0 && (
+            <div className="qask">
+              <div className="qask-h">Questions to ask the care team</div>
+              <ul>
+                {m.brief.questionsToAsk.map((q, i) => (
+                  <li key={i}>{q}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="factors">
+        <span className="fchip">{m.phase}</span>
+        <span className="fchip">{m.factors.randomized ? "Randomized / placebo possible" : "Open-label"}</span>
+        <span className="fchip" title="Approximate — matched on city/state">
+          ◎ {m.factors.nearestSite}
+        </span>
+        {!m.interventional && <span className="fchip">Observational</span>}
+      </div>
+
       {m.criteria.length > 0 && (
-        <div className="crit">
-          {m.criteria.map((c, i) => (
-            <LedgerRow key={i} c={c} />
-          ))}
-        </div>
+        <details className="ledger-d" open={near}>
+          <summary>
+            <span className="lsum-label">Eligibility reasoning</span>
+            <span className="lsum-tally">
+              {tally.met > 0 && <span className="t meets">{tally.met} met</span>}
+              {tally.confirm > 0 && <span className="t unc">{tally.confirm} to confirm</span>}
+              {tally.fails > 0 && <span className="t fails">{tally.fails} not met</span>}
+            </span>
+          </summary>
+          <Ledger criteria={m.criteria} />
+        </details>
       )}
 
       <div className="meta">
-        <span>{m.phase}</span>
         <span>{m.sponsor}</span>
-        <span className="locs site">{locs}</span>
         {m.total > 0 && (
           <span className="mono">
             {m.metCount}/{m.total} met
@@ -650,6 +864,59 @@ function MatchCard({ m }: { m: TrialMatch }) {
           {m.nctId} ↗
         </a>
       </div>
+    </div>
+  );
+}
+
+/* ---- the criterion ledger — grouped by verdict + filterable (the hierarchy) ---- */
+
+type Group = "confirm" | "fails" | "met";
+const GROUP_META: { key: Group; label: string; cls: string }[] = [
+  { key: "confirm", label: "To confirm", cls: "unc" },
+  { key: "fails", label: "Not met", cls: "fails" },
+  { key: "met", label: "Met", cls: "meets" },
+];
+function groupOf(v: Verdict): Group {
+  return v === "confirm" ? "confirm" : v === "fails" ? "fails" : "met";
+}
+function ledgerTally(criteria: Criterion[]) {
+  return {
+    met: criteria.filter((c) => c.verdict === "meets" || c.verdict === "clear").length,
+    confirm: criteria.filter((c) => c.verdict === "confirm").length,
+    fails: criteria.filter((c) => c.verdict === "fails").length,
+  };
+}
+
+function Ledger({ criteria }: { criteria: Criterion[] }) {
+  const [only, setOnly] = useState<Group | null>(null);
+  const groups: Record<Group, Criterion[]> = { confirm: [], fails: [], met: [] };
+  for (const c of criteria) groups[groupOf(c.verdict)].push(c);
+  const shown = GROUP_META.filter((g) => groups[g.key].length > 0 && (!only || only === g.key));
+
+  return (
+    <div className="ledger">
+      <div className="ledger-filter">
+        {GROUP_META.filter((g) => groups[g.key].length > 0).map((g) => (
+          <button key={g.key} className={`lchip ${g.cls} ${only === g.key ? "on" : ""}`} onClick={() => setOnly(only === g.key ? null : g.key)}>
+            <b>{groups[g.key].length}</b> {g.label}
+          </button>
+        ))}
+        {only && (
+          <button className="lchip clear" onClick={() => setOnly(null)}>
+            show all
+          </button>
+        )}
+      </div>
+      {shown.map((g) => (
+        <div className="lgroup" key={g.key}>
+          <div className={`lgh ${g.cls}`}>
+            {g.label} · {groups[g.key].length}
+          </div>
+          {groups[g.key].map((c, i) => (
+            <LedgerRow key={i} c={c} />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

@@ -59,6 +59,31 @@ export const LedgerCriterionSchema = z.object({
     .describe("The 'why', citing the patient record in the coordinator's words (e.g. 'Palbociclib (1L) — progressed Dec 2025'). Empty string only when there is genuinely nothing to cite."),
 });
 
+/* Patient-facing decision brief — grounded in the trial's real attributes and the
+   eligibility ledger. Non-directive: it frames the choice, it never makes it. */
+export const DecisionBriefSchema = z.object({
+  offers: z
+    .string()
+    .describe(
+      "What this trial could offer or is studying, in plain language a patient can read. Frame as POTENTIAL and as what the trial is testing — never a promise of benefit. Be phase-honest: Phase 1 tests safety/dosing and benefit is unproven; an observational study contributes data and provides no treatment. No efficacy claims.",
+    ),
+  commitment: z
+    .string()
+    .describe(
+      "What the trial asks of the patient, grounded in its design: whether the arm is randomized or placebo/blinding is possible, visits/procedures/biopsies implied, travel to the site, and study length. Concrete and honest.",
+    ),
+  uncertainty: z
+    .string()
+    .describe(
+      "What is experimental or unknown, appropriate to the phase and design. Name the real uncertainty plainly rather than reassuring.",
+    ),
+  questionsToAsk: z
+    .array(z.string())
+    .describe(
+      "2–3 specific questions the patient should bring to their care team, drawn from this trial's open items ('confirm' criteria) and uncertainties. Actionable and specific to this trial.",
+    ),
+});
+
 export const LedgerSchema = z.object({
   headline: z
     .string()
@@ -68,6 +93,9 @@ export const LedgerSchema = z.object({
     .describe(
       "Every criterion you can extract from the eligibility text that is relevant to this patient. For a near-miss, list EVERY failing criterion — never stop at the first. Fail closed.",
     ),
+  brief: DecisionBriefSchema.describe(
+    "A patient-facing decision brief for this trial. If the patient clearly does not qualify (a near-miss), keep it short and focus on what would rule it in or out. Never tell the patient what to choose.",
+  ),
 });
 
 export type ExtractedLedger = z.infer<typeof LedgerSchema>;

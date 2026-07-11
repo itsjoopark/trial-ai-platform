@@ -22,6 +22,7 @@ const FIELDS = [
   "protocolSection.identificationModule",
   "protocolSection.statusModule.overallStatus",
   "protocolSection.designModule",
+  "protocolSection.armsInterventionsModule.interventions",
   "protocolSection.conditionsModule",
   "protocolSection.sponsorCollaboratorsModule.leadSponsor",
   "protocolSection.eligibilityModule",
@@ -66,7 +67,18 @@ type RawStudy = {
   protocolSection?: {
     identificationModule?: { nctId?: string; briefTitle?: string; officialTitle?: string };
     statusModule?: { overallStatus?: string };
-    designModule?: { studyType?: string; phases?: string[] };
+    designModule?: {
+      studyType?: string;
+      phases?: string[];
+      designInfo?: {
+        allocation?: string; // RANDOMIZED | NON_RANDOMIZED | NA
+        interventionModel?: string;
+        primaryPurpose?: string; // TREATMENT | DIAGNOSTIC | PREVENTION | …
+        maskingInfo?: { masking?: string }; // NONE | SINGLE | DOUBLE | …
+      };
+      enrollmentInfo?: { count?: number };
+    };
+    armsInterventionsModule?: { interventions?: { type?: string; name?: string }[] };
     conditionsModule?: { conditions?: string[] };
     sponsorCollaboratorsModule?: { leadSponsor?: { name?: string } };
     eligibilityModule?: {
@@ -100,12 +112,20 @@ function normalizeStudy(study: RawStudy): Trial | null {
     status: l.status ?? "",
   }));
 
+  const design = p?.designModule;
+  const info = design?.designInfo;
+  const studyTypeUpper = (design?.studyType ?? "").toUpperCase();
+  const masking = (info?.maskingInfo?.masking ?? "").toUpperCase();
+  const interventions = (p?.armsInterventionsModule?.interventions ?? [])
+    .map((i) => ({ type: titleCase(i.type ?? ""), name: (i.name ?? "").trim() }))
+    .filter((i) => i.name);
+
   return {
     nctId: id.nctId,
     title: id.briefTitle ?? "(untitled study)",
     officialTitle: id.officialTitle ?? "",
-    phase: formatPhases(p?.designModule?.phases),
-    studyType: titleCase(p?.designModule?.studyType ?? ""),
+    phase: formatPhases(design?.phases),
+    studyType: titleCase(design?.studyType ?? ""),
     overallStatus: p?.statusModule?.overallStatus ?? "",
     sponsor: p?.sponsorCollaboratorsModule?.leadSponsor?.name ?? "—",
     conditions: p?.conditionsModule?.conditions ?? [],
@@ -115,6 +135,12 @@ function normalizeStudy(study: RawStudy): Trial | null {
     stdAges: p?.eligibilityModule?.stdAges ?? [],
     locations,
     url: `https://clinicaltrials.gov/study/${id.nctId}`,
+    randomized: (info?.allocation ?? "").toUpperCase() === "RANDOMIZED",
+    masked: masking !== "" && masking !== "NONE",
+    primaryPurpose: titleCase(info?.primaryPurpose ?? ""),
+    interventional: studyTypeUpper === "INTERVENTIONAL",
+    enrollment: design?.enrollmentInfo?.count ?? 0,
+    interventions,
   };
 }
 
