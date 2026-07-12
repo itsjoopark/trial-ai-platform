@@ -1,20 +1,23 @@
 "use client";
 
 /* ============================================================================
-   Trial — the coordinator console (client state machine)
+   Trial — patient-first client state machine
 
-   Ports the prototype's phase flow to React and wires the three seams to real
-   backends:
-     landing → capture   POST /api/extract  (note → structured profile, Claude)
-     clarify → confirm    the gaps that change a match
-     reason  → results    POST /api/match   (live trials + per-criterion ledger)
+   Portal home + landing are the front door (top header + portal tabs). Once the
+   patient enters the flow, the app switches to a Claude-desktop-style workspace
+   shell (persistent left sidebar + main board):
 
-   The criterion ledger, verdict triad, mono-for-data, disclaimer, theme toggle,
-   and reduced-motion all come from the design system unchanged.
+     home → landing → capture(extract) → survey(preferences) →
+     clarify(AI gaps, if any) → review(+consent) → reason → results
+
+   The criterion ledger stays the signature and the evidence; the decision brief,
+   preferences, and geography grouping are the patient-facing decision layer.
    ========================================================================== */
 
 import { useEffect, useRef, useState } from "react";
+import AgentAvatar from "@/app/components/AgentAvatar";
 import AsciiBackground from "@/app/components/AsciiBackground";
+import ProductCarousel from "@/app/components/ProductCarousel";
 import type { TrialMatch, Criterion, Verdict } from "@/lib/types";
 
 /* ---- API response shapes ---- */
@@ -36,24 +39,50 @@ type Counts = {
 };
 type MatchResponse = { conditionQuery: string; summary: string; counts: Counts; matches: TrialMatch[] };
 
-type Phase = "landing" | "capture" | "clarify" | "confirm" | "reason" | "results";
+type PortalMode = "patient" | "clinician" | "partner";
+type Phase = "home" | "landing" | "capture" | "survey" | "clarify" | "confirm" | "reason" | "results";
+
+/* Phases that render inside the workspace shell (sidebar + main). */
+const SHELL_PHASES: Phase[] = ["capture", "survey", "clarify", "confirm", "reason", "results"];
+
+const PORTAL_MODES: [PortalMode, string][] = [
+  ["patient", "Patient"],
+  ["clinician", "Clinician"],
+  ["partner", "Business Partner"],
+];
+const MODE_BADGE: Record<PortalMode, string> = { patient: "patient", clinician: "clinician", partner: "partner" };
+
+/* ---- deterministic intake survey (patient preferences) ---- */
+type TravelPref = "local" | "regional" | "any";
+type StudyPref = "treatment" | "observational" | "either";
+type RandPref = "avoid" | "open" | "none";
+type SurveyPrefs = { travel: TravelPref | null; studyType: StudyPref | null; randomization: RandPref | null };
+const EMPTY_SURVEY: SurveyPrefs = { travel: null, studyType: null, randomization: null };
+
+/* results filters */
+type StudyFilter = "all" | "treatment" | "observational";
+
+/* sidebar step tracker */
+const STEPS: { key: "note" | "prefs" | "matches"; label: string }[] = [
+  { key: "note", label: "Your note" },
+  { key: "prefs", label: "Preferences" },
+  { key: "matches", label: "Matches" },
+];
+function stepKey(phase: Phase): "note" | "prefs" | "matches" {
+  if (phase === "capture") return "note";
+  if (phase === "survey" || phase === "clarify" || phase === "confirm") return "prefs";
+  return "matches";
+}
 
 const SAMPLE_NOTE = `61F, ECOG 1. HR-positive (ER 90%, PR 60%), HER2-negative (IHC 1+) metastatic breast ca, stage IV. 1L letrozole+palbociclib (3/2024) → PD 12/2025. 2L fulvestrant (1/2026) → PD 6/2026. Trial of pembrolizumab on a prior protocol. PIK3CA H1047R+, BRCA wt. Boston MA.`;
-
-const PHASES: [Phase, string][] = [
-  ["capture", "Capture"],
-  ["clarify", "Clarify"],
-  ["confirm", "Confirm"],
-  ["results", "Results"],
-];
-const ORDER: Phase[] = ["landing", "capture", "clarify", "confirm", "reason", "results"];
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : "Something went wrong.";
 }
 
 export default function Page() {
-  const [phase, setPhase] = useState<Phase>("landing");
+  const [phase, setPhase] = useState<Phase>("home");
+  const [portalMode, setPortalMode] = useState<PortalMode>("patient");
   const [note, setNote] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -62,6 +91,14 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  // intake preferences + results controls (lifted so the sidebar and board share them)
+  const [survey, setSurvey] = useState<SurveyPrefs>(EMPTY_SURVEY);
+  const [consent, setConsent] = useState(false);
+  const [prefs, setPrefs] = useState<Set<PrefKey>>(new Set());
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [studyFilter, setStudyFilter] = useState<StudyFilter>("all");
+
   const appRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,15 +107,25 @@ export default function Page() {
 
   /* ---- transitions ---- */
 
-  async function readNote(text: string) {
-    const t = text.trim();
-    if (!t) return;
-    setNote(t);
+  function resetIntake() {
+    setNote("");
     setProfile(null);
     setAnswers({});
     setStep(0);
     setMatch(null);
     setError(null);
+    setSurvey(EMPTY_SURVEY);
+    setConsent(false);
+    setPrefs(new Set());
+    setSaved(new Set());
+    setStudyFilter("all");
+  }
+
+  async function readNote(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    resetIntake();
+    setNote(t);
     setPhase("capture");
     setBusy(true);
     try {
@@ -97,7 +144,15 @@ export default function Page() {
     }
   }
 
-  function toClarify() {
+  function submitSurvey(s: SurveyPrefs) {
+    setSurvey(s);
+    // Seed the results controls from the survey — this is what makes preferences bite.
+    const seeded = new Set<PrefKey>();
+    if (s.travel && s.travel !== "any") seeded.add("near");
+    if (s.randomization === "avoid") seeded.add("open");
+    setPrefs(seeded);
+    setStudyFilter(s.studyType === "treatment" ? "treatment" : s.studyType === "observational" ? "observational" : "all");
+    // Advance: a short AI clarify only if the note left genuine gaps.
     if (profile && profile.clarifications.length > 0) {
       setStep(0);
       setPhase("clarify");
@@ -116,7 +171,7 @@ export default function Page() {
   }
 
   async function findTrials() {
-    if (!profile) return;
+    if (!profile || !consent) return;
     setError(null);
     setPhase("reason");
     setBusy(true);
@@ -141,67 +196,373 @@ export default function Page() {
     }
   }
 
-  function restart() {
+  const togglePref = (k: PrefKey) =>
+    setPrefs((p) => {
+      const n = new Set(p);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
+  const toggleSave = (nct: string) =>
+    setSaved((s) => {
+      const n = new Set(s);
+      if (n.has(nct)) n.delete(nct);
+      else n.add(nct);
+      return n;
+    });
+
+  function goHome() {
+    setPhase("home");
+    resetIntake();
+  }
+  function newSearch() {
+    resetIntake();
     setPhase("landing");
-    setNote("");
-    setProfile(null);
-    setAnswers({});
-    setStep(0);
-    setMatch(null);
-    setError(null);
+  }
+  function selectMode(mode: PortalMode) {
+    setPortalMode(mode);
+    if (mode !== "patient" && phase !== "home") goHome();
+  }
+  function enterPortal() {
+    if (portalMode === "patient") setPhase("landing");
   }
 
-  /* ---- header ---- */
-  const cur = ORDER.indexOf(phase);
+  /* ---- top header (home + landing only) ---- */
   const header = (
     <div className="top">
-      <span className="brand">
-        <span className="mk" />
-        Trial <small>console</small>
-      </span>
-      <span className="phasetrack">
-        {PHASES.map(([id, label], i) => {
-          const idx = ORDER.indexOf(id);
-          const on = phase === id || (id === "results" && phase === "reason");
-          const cls = on ? "on" : idx < cur ? "done" : "";
-          return (
-            <span key={id} style={{ display: "contents" }}>
-              {i > 0 && <span className="sep" />}
-              <span className={`p ${cls}`}>
-                <b>{label}</b>
-              </span>
-            </span>
-          );
-        })}
-      </span>
-      <button className="tbtn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
-        {theme === "dark" ? "☀ Light" : "☾ Dark"}
-      </button>
-      <button className="tbtn" onClick={restart}>
-        Restart
-      </button>
+      <div className="top-left">
+        <button type="button" className="brand brand-btn" onClick={goHome}>
+          <span className="mk" />
+          Trial <small>{MODE_BADGE[portalMode]}</small>
+        </button>
+      </div>
+      <div className="mode-switch" role="tablist" aria-label="Portal mode">
+        {PORTAL_MODES.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={portalMode === id}
+            className={`mode-switch__btn${portalMode === id ? " on" : ""}`}
+            onClick={() => selectMode(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="top-right">
+        <span className="top-actions">
+          <span className="demo-badge" title="This is a demonstration. Do not enter real patient information.">
+            DEMO · SYNTHETIC DATA ONLY
+          </span>
+          <button
+            className="tbtn tbtn-icon"
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
+        </span>
+      </div>
     </div>
   );
+
+  const inShell = SHELL_PHASES.includes(phase);
 
   return (
     <div className="app" ref={appRef}>
       <AsciiBackground trackRef={appRef} />
-      {header}
-      {phase === "landing" && <Landing note={note} setNote={setNote} onRead={readNote} />}
-      {phase === "capture" && (
-        <Capture note={note} profile={profile} busy={busy} error={error} onRetry={() => readNote(note)} onContinue={toClarify} />
+
+      {inShell ? (
+        <div className="shell">
+          <Sidebar
+            phase={phase}
+            profile={profile}
+            theme={theme}
+            onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+            onHome={goHome}
+            onNewSearch={newSearch}
+            showControls={phase === "results"}
+            prefs={prefs}
+            onTogglePref={togglePref}
+            studyFilter={studyFilter}
+            onStudyFilter={setStudyFilter}
+            saved={saved}
+            onToggleSave={toggleSave}
+            matches={match?.matches ?? []}
+          />
+          <div className="shell-main">
+            {phase === "capture" && (
+              <Capture note={note} profile={profile} busy={busy} error={error} onRetry={() => readNote(note)} onContinue={() => setPhase("survey")} />
+            )}
+            {phase === "survey" && <Survey initial={survey} onSubmit={submitSurvey} onBack={() => setPhase("capture")} />}
+            {phase === "clarify" && profile && (
+              <Clarify profile={profile} step={step} onAnswer={answer} onBack={() => step > 0 && setStep(step - 1)} onSkip={() => answer("(skipped — flagged uncertain)")} />
+            )}
+            {phase === "confirm" && profile && (
+              <Review profile={profile} answers={answers} consent={consent} onConsent={setConsent} onFind={findTrials} />
+            )}
+            {phase === "reason" && <Reason busy={busy} error={error} onRetry={findTrials} />}
+            {phase === "results" && match && (
+              <Results data={match} prefs={prefs} saved={saved} onToggleSave={toggleSave} studyFilter={studyFilter} survey={survey} />
+            )}
+            <AppFooter />
+          </div>
+        </div>
+      ) : (
+        <>
+          {header}
+          <div className="app-main">
+            {phase === "home" && <Home mode={portalMode} onEnter={enterPortal} onSelectPatient={() => selectMode("patient")} />}
+            {phase === "landing" && <Landing note={note} setNote={setNote} onRead={readNote} />}
+            <AppFooter />
+          </div>
+        </>
       )}
-      {phase === "clarify" && profile && (
-        <Clarify profile={profile} step={step} onAnswer={answer} onBack={() => step > 0 && setStep(step - 1)} onSkip={() => answer("(skipped — flagged uncertain)")} />
-      )}
-      {phase === "confirm" && profile && <Confirm profile={profile} answers={answers} onFind={findTrials} />}
-      {phase === "reason" && <Reason busy={busy} error={error} onRetry={findTrials} />}
-      {phase === "results" && match && <Results data={match} />}
     </div>
   );
 }
 
+/* ============================ workspace shell ============================= */
+
+function Sidebar({
+  phase,
+  profile,
+  theme,
+  onTheme,
+  onHome,
+  onNewSearch,
+  showControls,
+  prefs,
+  onTogglePref,
+  studyFilter,
+  onStudyFilter,
+  saved,
+  onToggleSave,
+  matches,
+}: {
+  phase: Phase;
+  profile: Profile | null;
+  theme: "light" | "dark";
+  onTheme: () => void;
+  onHome: () => void;
+  onNewSearch: () => void;
+  showControls: boolean;
+  prefs: Set<PrefKey>;
+  onTogglePref: (k: PrefKey) => void;
+  studyFilter: StudyFilter;
+  onStudyFilter: (f: StudyFilter) => void;
+  saved: Set<string>;
+  onToggleSave: (n: string) => void;
+  matches: TrialMatch[];
+}) {
+  const active = stepKey(phase);
+  const doneUpTo = STEPS.findIndex((s) => s.key === active);
+  const savedList = matches.filter((m) => saved.has(m.nctId));
+  const studyOpts: [StudyFilter, string][] = [
+    ["all", "All"],
+    ["treatment", "Treatment"],
+    ["observational", "Observational"],
+  ];
+
+  return (
+    <aside className="sidebar">
+      <button type="button" className="sb-brand" onClick={onHome}>
+        <span className="mk" />
+        Trial <small>patient</small>
+      </button>
+
+      <div className="demo-badge sb-demo">DEMO · SYNTHETIC DATA ONLY</div>
+
+      <button type="button" className="sb-new" onClick={onNewSearch}>
+        + New search
+      </button>
+
+      <nav className="sb-steps" aria-label="Progress">
+        {STEPS.map((s, i) => (
+          <div key={s.key} className={`sb-step ${s.key === active ? "on" : i < doneUpTo ? "done" : ""}`}>
+            <span className="sb-step-dot" />
+            {s.label}
+          </div>
+        ))}
+      </nav>
+
+      {showControls && (
+        <div className="sb-controls">
+          <div className="sb-sec">
+            <div className="sb-h">Study type</div>
+            <div className="seg">
+              {studyOpts.map(([val, label]) => (
+                <button key={val} className={`seg-btn ${studyFilter === val ? "on" : ""}`} onClick={() => onStudyFilter(val)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="sb-sec">
+            <div className="sb-h">Priorities</div>
+            <div className="sb-prefs">
+              {PREFS.map((p) => (
+                <button key={p.key} className={`pref ${prefs.has(p.key) ? "on" : ""}`} title={p.hint} onClick={() => onTogglePref(p.key)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="sb-sec">
+            <div className="sb-h">To discuss{savedList.length > 0 ? ` (${savedList.length})` : ""}</div>
+            {savedList.length === 0 ? (
+              <p className="sb-empty">Star a trial to add it here.</p>
+            ) : (
+              <div className="sb-saved">
+                {savedList.map((m) => (
+                  <span key={m.nctId} className="sb-saved-chip mono">
+                    {m.nctId}
+                    <button onClick={() => onToggleSave(m.nctId)} aria-label={`remove ${m.nctId}`}>
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="sb-spacer" />
+
+      {profile && (
+        <div className="sb-profile">
+          <div className="sb-h">Your profile</div>
+          <p className="sb-summary">{profile.summary}</p>
+        </div>
+      )}
+
+      <button
+        className="sb-theme"
+        onClick={onTheme}
+        aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      >
+        {theme === "dark" ? "☀ Light" : "☾ Dark"}
+      </button>
+    </aside>
+  );
+}
+
 /* ============================ phase views ================================= */
+
+function Home({
+  mode,
+  onEnter,
+  onSelectPatient,
+}: {
+  mode: PortalMode;
+  onEnter: () => void;
+  onSelectPatient: () => void;
+}) {
+  const copy = {
+    patient: {
+      kicker: "Patient portal",
+      title: "See which clinical trials you may qualify for — and why.",
+      lede: "Share your health information in plain language or upload a note. Trial structures it, screens live against recruiting studies on ClinicalTrials.gov, and shows the inclusion and exclusion reasoning for every match.",
+      cta: "Enter patient portal →",
+    },
+    clinician: {
+      kicker: "Clinician portal",
+      title: "Screen patients against recruiting trials with a sourced criterion ledger.",
+      lede: "Built for coordinators and clinicians who need fast, auditable eligibility calls — not a black-box score. Per-criterion reasoning is shown for every trial, with gaps flagged for follow-up.",
+      cta: "Clinician portal — coming soon",
+    },
+    partner: {
+      kicker: "Business partner portal",
+      title: "Connect sponsors, sites, and patients through transparent trial matching.",
+      lede: "Trial gives research organizations a coordinator-first workflow for surfacing recruiting studies with documented inclusion/exclusion calls — ready for integration into your trial operations stack.",
+      cta: "Partner portal — coming soon",
+    },
+  }[mode];
+
+  return (
+    <>
+      <div className="scroll home-scroll">
+        <div className="col home-col">
+          <section className="home-hero">
+            <p className="home-kicker">{copy.kicker}</p>
+            <h1>{copy.title}</h1>
+            <p className="home-lede">{copy.lede}</p>
+          </section>
+          <div className="home-actions">
+            {mode === "patient" ? (
+              <button type="button" className="btn go home-cta" onClick={onEnter}>
+                {copy.cta}
+              </button>
+            ) : (
+              <p className="home-soon">
+                <b>{copy.cta}</b> — we&apos;re onboarding {mode === "clinician" ? "clinical teams" : "research partners"} now. Switch to{" "}
+                <button type="button" className="home-link" onClick={onSelectPatient}>
+                  Patient
+                </button>{" "}
+                to try the live demo.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+      <section className="home-product" aria-label="Product information">
+        <div className="home-product__inner">
+          <header className="home-product__head">
+            <p className="home-product__kicker">Product</p>
+            <h2>Built for transparent trial matching</h2>
+          </header>
+          <ProductCarousel />
+        </div>
+      </section>
+    </>
+  );
+}
+
+function AppFooter() {
+  return (
+    <footer className="site-footer">
+      <div className="site-footer__inner">
+        <p className="footer-demo">Prototype. Not medical advice. Do not enter real health information.</p>
+        <div className="site-footer__brand">
+          <strong>Trial</strong>
+          <span>Clinical trial matching with transparent eligibility reasoning.</span>
+        </div>
+        <div className="site-footer__cols">
+          <section>
+            <h3>HIPAA &amp; privacy</h3>
+            <p>
+              Trial is designed to support HIPAA-aligned workflows. Protected health information (PHI) is encrypted in transit and at rest,
+              access is role-based and logged, and we maintain administrative, physical, and technical safeguards consistent with the HIPAA
+              Security Rule.
+            </p>
+          </section>
+          <section>
+            <h3>Business associate agreements</h3>
+            <p>
+              Covered entities and business associates may execute a Business Associate Agreement (BAA) before production use with real patient
+              data. Demo and evaluation environments must use de-identified or synthetic records only.
+            </p>
+          </section>
+          <section>
+            <h3>Your rights</h3>
+            <p>
+              Users may request access, amendment, or deletion of personal data subject to applicable law and contractual obligations. Report
+              security concerns to <a href="mailto:privacy@trial.health">privacy@trial.health</a>.
+            </p>
+          </section>
+        </div>
+        <p className="site-footer__legal">
+          © {new Date().getFullYear()} Trial. Informational decision support — not medical advice or a final eligibility determination.
+          Not a substitute for professional clinical judgment.
+        </p>
+      </div>
+    </footer>
+  );
+}
 
 function pickWelcomeGreeting(): string {
   const hour = new Date().getHours();
@@ -227,39 +588,15 @@ function pickWelcomeGreeting(): string {
 }
 
 function Landing({ note, setNote, onRead }: { note: string; setNote: (s: string) => void; onRead: (s: string) => void }) {
-  const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [greeting, setGreeting] = useState("Welcome");
   const [entered, setEntered] = useState(false);
-  const [pdfBusy, setPdfBusy] = useState(false);
-  const [pdfError, setPdfError] = useState<string | null>(null);
 
   useEffect(() => {
     setGreeting(pickWelcomeGreeting());
     const id = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(id);
   }, []);
-
-  async function handlePdfUpload(file: File) {
-    setPdfError(null);
-    setPdfBusy(true);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/upload-pdf", { method: "POST", body: form });
-      const data = (await res.json()) as { text?: string; error?: string };
-      if (!res.ok) throw new Error(data.error || "Could not read that PDF.");
-      const text = (data.text ?? "").trim();
-      if (!text) throw new Error("No readable text found in that PDF.");
-      setNote(text);
-      onRead(text);
-    } catch (e) {
-      setPdfError(errMsg(e));
-    } finally {
-      setPdfBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  }
 
   return (
     <div ref={scrollRef} className="scroll scroll--landing">
@@ -269,8 +606,8 @@ function Landing({ note, setNote, onRead }: { note: string; setNote: (s: string)
             {greeting}
           </h1>
           <p>
-            Drop a messy note, upload a PDF, or describe the patient. I read it into a structured profile, ask only the questions that change a
-            match, then screen live against recruiting ClinicalTrials.gov studies and show the inclusion/exclusion call for each one.
+            Share your notes or describe your situation. I&apos;ll read it into a structured profile, ask a few quick preferences, then screen
+            live against recruiting ClinicalTrials.gov studies and show the reasoning behind every match.
           </p>
           <div className="paste">
             <textarea
@@ -282,41 +619,24 @@ function Landing({ note, setNote, onRead }: { note: string; setNote: (s: string)
                   onRead(note);
                 }
               }}
-              placeholder="Paste a patient note or describe the patient…"
+              placeholder="Paste your notes or describe your situation…"
             />
             <div className="row">
               <span className="hint">⌘↵ to send</span>
               <span className="sp" />
-              <input
-                ref={fileRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                hidden
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void handlePdfUpload(file);
-                }}
-              />
-              <button className="btn" type="button" disabled={pdfBusy} onClick={() => fileRef.current?.click()}>
-                {pdfBusy ? "Reading PDF…" : "Upload PDF"}
-              </button>
-              <button className="btn go" disabled={pdfBusy} onClick={() => onRead(note)}>
-                Read the note →
+              <button className="btn go" onClick={() => onRead(note)}>
+                Get started →
               </button>
             </div>
-            {pdfError && <p className="paste-err">{pdfError}</p>}
           </div>
           <div className="chips">
             <button className="chip" onClick={() => onRead(SAMPLE_NOTE)}>
               <span className="s">demo</span> Try a sample patient (Margaret)
             </button>
-            <button className="chip" onClick={() => setNote(SAMPLE_NOTE)}>
-              Paste example note
-            </button>
           </div>
           <div className="disclaimer" style={{ marginTop: 20 }}>
-            Informational decision support for a coordinator&apos;s review — not medical advice or a final eligibility determination. Trial data is
-            live from ClinicalTrials.gov; use synthetic personas only, no real patient data.
+            Informational decision support to review with your care team — not medical advice or a final eligibility determination. Trial data is
+            live from ClinicalTrials.gov. Please use synthetic personas only in this demo, not real patient data.
           </div>
         </div>
       </div>
@@ -340,21 +660,20 @@ function Capture({
   onContinue: () => void;
 }) {
   const gaps = profile?.fields.filter((f) => f.gap).length ?? 0;
-  const clar = profile?.clarifications.length ?? 0;
   return (
     <div className="scroll">
-      <div className="col">
+      <div className="board">
         <div className="umsg">
-          <div className="bub">Screen this patient for recruiting trials she&apos;s eligible for.</div>
+          <div className="bub">Find clinical trials I may be eligible for.</div>
         </div>
         <div className="agent-say">
-          <span className="av">✳</span>
+          <AgentAvatar />
           <div className="body">
-            <div className="who">Coordinating agent · reading the note</div>
+            <div className="who">Your guide · reading your note</div>
             <div className="note-src">{note}</div>
             {error ? (
               <div className="err">
-                <b>Couldn&apos;t read the note.</b> {error}
+                <b>I couldn&apos;t read that.</b> {error}
                 <div className="retry">
                   <button className="btn" onClick={onRetry}>
                     Try again
@@ -364,7 +683,7 @@ function Capture({
             ) : busy || !profile ? (
               <div className="readout">
                 <div className="rh">
-                  <span className="pulse" /> Building structured profile
+                  <span className="pulse" /> Building your profile
                 </div>
                 <div style={{ padding: "14px 15px" }}>
                   <div className="working">
@@ -373,7 +692,7 @@ function Capture({
                       <i />
                       <i />
                     </span>
-                    reasoning over the note…
+                    reading your note…
                   </div>
                 </div>
               </div>
@@ -381,7 +700,7 @@ function Capture({
               <>
                 <div className="readout">
                   <div className="rh">
-                    <span className="pulse" /> Structured profile · {profile.conditionQuery}
+                    <span className="pulse" /> Your profile · {profile.conditionQuery}
                   </div>
                   {profile.fields.map((f, i) => (
                     <div className="frow" key={i}>
@@ -400,16 +719,97 @@ function Capture({
                 </div>
                 <div className="continue-row">
                   <button className="btn go" onClick={onContinue}>
-                    {clar > 0 ? "Continue — a few quick questions" : "Continue — confirm the profile"}
+                    Continue — a few quick preferences
                   </button>
-                  <span className="n">
-                    {gaps > 0 ? `${gaps} gap${gaps > 1 ? "s" : ""} found · ` : ""}
-                    {clar > 0 ? `${clar} question${clar > 1 ? "s" : ""} that change a match` : "no blocking gaps"}
-                  </span>
+                  <span className="n">{gaps > 0 ? `${gaps} thing${gaps > 1 ? "s" : ""} we may ask you to confirm` : "no blocking gaps"}</span>
                 </div>
               </>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- deterministic preference survey ---- */
+const SURVEY_Q: {
+  key: keyof SurveyPrefs;
+  q: string;
+  why: string;
+  options: { value: string; label: string }[];
+}[] = [
+  {
+    key: "travel",
+    q: "How far are you able to travel for a trial?",
+    why: "We keep everything, but push far-away trials into a separate group so nearby options come first.",
+    options: [
+      { value: "local", label: "Close to home (~25 miles)" },
+      { value: "regional", label: "Regional (~100 miles)" },
+      { value: "any", label: "Anywhere for the right trial" },
+    ],
+  },
+  {
+    key: "studyType",
+    q: "Are you looking for treatment, or open to observational (data-only) studies too?",
+    why: "Observational studies collect information and don't provide treatment. Most people want treatment trials.",
+    options: [
+      { value: "treatment", label: "Treatment trials only" },
+      { value: "observational", label: "Observational studies" },
+      { value: "either", label: "Show me both" },
+    ],
+  },
+  {
+    key: "randomization",
+    q: "Are you comfortable with trials that may randomize you or use a placebo?",
+    why: "Some trials assign your treatment by chance, and a few include a placebo group.",
+    options: [
+      { value: "avoid", label: "I'd prefer to avoid it" },
+      { value: "open", label: "I'm open to it" },
+      { value: "none", label: "No preference" },
+    ],
+  },
+];
+
+function Survey({ initial, onSubmit, onBack }: { initial: SurveyPrefs; onSubmit: (s: SurveyPrefs) => void; onBack: () => void }) {
+  const [picks, setPicks] = useState<SurveyPrefs>(initial);
+  const set = (key: keyof SurveyPrefs, value: string) => setPicks((p) => ({ ...p, [key]: value }));
+  const complete = picks.travel && picks.studyType && picks.randomization;
+
+  return (
+    <div className="scroll">
+      <div className="board">
+        <div className="agent-say">
+          <AgentAvatar />
+          <div className="body">
+            <div className="who">Your guide</div>
+            <div>A few quick preferences so I can focus your matches. These don&apos;t change who qualifies — they change what comes first.</div>
+          </div>
+        </div>
+
+        <div className="survey">
+          {SURVEY_Q.map((item) => (
+            <div className="sq" key={item.key}>
+              <div className="sq-q">{item.q}</div>
+              <div className="sq-why">{item.why}</div>
+              <div className="sq-opts">
+                {item.options.map((o) => (
+                  <button key={o.value} className={`sq-opt ${picks[item.key] === o.value ? "on" : ""}`} onClick={() => set(item.key, o.value)}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="continue-row">
+          <button className="btn go" disabled={!complete} onClick={() => complete && onSubmit(picks)}>
+            Continue →
+          </button>
+          <button className="ghost" onClick={onBack}>
+            ← Back
+          </button>
         </div>
       </div>
     </div>
@@ -433,12 +833,12 @@ function Clarify({
   const c = step < list.length ? list[step] : null;
   return (
     <div className="scroll">
-      <div className="col">
+      <div className="board">
         <div className="agent-say">
-          <span className="av">✳</span>
+          <AgentAvatar />
           <div className="body">
-            <div className="who">Coordinating agent</div>
-            <div>Profile&apos;s in. I only need the gaps that actually change which trials qualify:</div>
+            <div className="who">Your guide</div>
+            <div>A few quick questions to sharpen your matches — only the gaps that actually change which trials qualify:</div>
           </div>
         </div>
         {c && <ClarifyCard c={c} step={step} total={list.length} onAnswer={onAnswer} onBack={onBack} onSkip={onSkip} />}
@@ -488,10 +888,10 @@ function ClarifyCard({
           <div className="divl" />
         </div>
       ))}
-      <div className="opt agent" onClick={() => onAnswer("Let the agent decide from the note")}>
+      <div className="opt agent" onClick={() => onAnswer("Let my guide decide from the note")}>
         <div className="num">⤳</div>
         <div>
-          <div className="ot">Let the agent decide from the note</div>
+          <div className="ot">Let my guide decide from the note</div>
         </div>
       </div>
       <div className="cfoot">
@@ -522,33 +922,54 @@ function ClarifyCard({
   );
 }
 
-function Confirm({ profile, answers, onFind }: { profile: Profile; answers: Record<string, string>; onFind: () => void }) {
+function Review({
+  profile,
+  answers,
+  consent,
+  onConsent,
+  onFind,
+}: {
+  profile: Profile;
+  answers: Record<string, string>;
+  consent: boolean;
+  onConsent: (v: boolean) => void;
+  onFind: () => void;
+}) {
   const applied = Object.keys(answers).length;
   return (
     <div className="scroll">
-      <div className="col">
+      <div className="board">
         <div className="agent-say">
-          <span className="av">✳</span>
+          <AgentAvatar />
           <div className="body">
-            <div className="who">Coordinating agent · trust checkpoint</div>
+            <div className="who">Your guide · quick check</div>
             <div>
-              Here&apos;s the structured patient I&apos;ll screen with. This is the record every eligibility call is checked against — I&apos;ll
-              search live for <span className="mono">{profile.conditionQuery}</span>.
+              Here&apos;s what I&apos;ll match on. Correct anything before we search — this is the record every eligibility call is checked
+              against. I&apos;ll search live for <span className="mono">{profile.conditionQuery}</span>.
             </div>
           </div>
         </div>
         <div className="profile">
           {profile.fields.map((f, i) => (
-            <div className={`prow ${f.gap ? "" : ""}`} key={i}>
+            <div className="prow" key={i}>
               <span className="k">{f.label}</span>
               <span className="v">{f.clinical ? <span className="mono">{f.value}</span> : f.value}</span>
               <button className="edit">edit</button>
             </div>
           ))}
         </div>
+
+        <label className="consent">
+          <input type="checkbox" checked={consent} onChange={(e) => onConsent(e.target.checked)} />
+          <span>
+            I understand this is informational decision support to review with a care team — <b>not medical advice</b> — and I agree to my entered
+            information being processed to find trials. In this demo I&apos;ll use synthetic information only.
+          </span>
+        </label>
+
         <div className="continue-row">
-          <button className="btn go" onClick={onFind}>
-            Looks right — find trials →
+          <button className="btn go" disabled={!consent} onClick={onFind}>
+            Find my trials →
           </button>
           <span className="n">
             {applied > 0 ? `${applied} answer${applied > 1 ? "s" : ""} applied · ` : ""}
@@ -562,22 +983,22 @@ function Confirm({ profile, answers, onFind }: { profile: Profile; answers: Reco
 
 function Reason({ busy, error, onRetry }: { busy: boolean; error: string | null; onRetry: () => void }) {
   const lines = [
-    "Querying recruiting studies on ClinicalTrials.gov…",
-    "Applying structural gates (condition · recruiting · phase)…",
-    "Segmenting eligibility prose into atomic criteria…",
-    "Reasoning criterion-by-criterion against the profile…",
-    "Forcing “confirm” where the record is silent · failing closed on near-misses…",
+    "Searching recruiting studies on ClinicalTrials.gov…",
+    "Applying the basics (your condition · recruiting · phase)…",
+    "Breaking each study's eligibility into plain criteria…",
+    "Checking every criterion against your profile…",
+    "Flagging what needs confirming · never guessing a maybe into a yes…",
   ];
   return (
     <div className="scroll">
-      <div className="col">
+      <div className="board">
         <div className="agent-say">
-          <span className="av">✳</span>
+          <AgentAvatar />
           <div className="body">
-            <div className="who">Coordinating agent · screening</div>
+            <div className="who">Your guide · searching</div>
             {error ? (
               <div className="err">
-                <b>Screening failed.</b> {error}
+                <b>The search failed.</b> {error}
                 <div className="retry">
                   <button className="btn" onClick={onRetry}>
                     Try again
@@ -599,7 +1020,7 @@ function Reason({ busy, error, onRetry }: { busy: boolean; error: string | null;
                       <i />
                       <i />
                     </span>
-                    reasoning live — this runs one Claude call per trial…
+                    reading each trial closely — one check per trial…
                   </div>
                 )}
               </div>
@@ -614,7 +1035,7 @@ function Reason({ busy, error, onRetry }: { busy: boolean; error: string | null;
 /* ---- preference controls: the patient-agency lever (transparent re-ranking) ---- */
 type PrefKey = "near" | "established" | "open" | "burden";
 const PREFS: { key: PrefKey; label: string; hint: string }[] = [
-  { key: "near", label: "Stay near home", hint: "prioritize a site close to the patient" },
+  { key: "near", label: "Stay near home", hint: "prioritize a site close to you" },
   { key: "established", label: "Established science", hint: "weight later-phase trials" },
   { key: "open", label: "Avoid randomization / placebo", hint: "down-rank blinded or randomized designs" },
   { key: "burden", label: "Lower burden", hint: "favor fewer visits and procedures (rough estimate)" },
@@ -641,116 +1062,114 @@ function prefReasons(m: TrialMatch, prefs: Set<PrefKey>): string[] {
   return r;
 }
 
-function Results({ data }: { data: MatchResponse }) {
+function ratioOf(m: TrialMatch): number {
+  return m.total === 0 ? 0 : m.metCount / m.total;
+}
+function travelThreshold(t: TravelPref | null): number {
+  return t === "local" ? 2 : t === "regional" ? 1 : 0; // 'any'/null → 0 (no grouping)
+}
+function passesStudyFilter(m: TrialMatch, f: StudyFilter): boolean {
+  if (f === "all") return true;
+  return f === "treatment" ? m.interventional : !m.interventional;
+}
+
+function Results({
+  data,
+  prefs,
+  saved,
+  onToggleSave,
+  studyFilter,
+  survey,
+}: {
+  data: MatchResponse;
+  prefs: Set<PrefKey>;
+  saved: Set<string>;
+  onToggleSave: (n: string) => void;
+  studyFilter: StudyFilter;
+  survey: SurveyPrefs;
+}) {
   const { counts, matches, conditionQuery } = data;
-  const [prefs, setPrefs] = useState<Set<PrefKey>>(new Set());
-  const [saved, setSaved] = useState<Set<string>>(new Set());
-
-  const togglePref = (k: PrefKey) =>
-    setPrefs((p) => {
-      const n = new Set(p);
-      if (n.has(k)) n.delete(k);
-      else n.add(k);
-      return n;
-    });
-  const toggleSave = (nct: string) =>
-    setSaved((s) => {
-      const n = new Set(s);
-      if (n.has(nct)) n.delete(nct);
-      else n.add(nct);
-      return n;
-    });
-
-  const consider = matches.filter((m) => m.status === "eligible" || m.status === "uncertain");
-  const ruledOut = matches.filter((m) => m.status === "near");
-  const screened = matches.filter((m) => m.status === "screened");
-
-  // Preference re-ranking (agency) — transparent, over deterministic factors only.
   const active = prefs.size > 0;
-  const ordered = active
-    ? [...consider].sort(
-        (a, b) => prefScore(b, prefs) - prefScore(a, prefs) || b.metCount / (b.total || 1) - a.metCount / (a.total || 1),
-      )
-    : consider;
 
-  const savedList = matches.filter((m) => saved.has(m.nctId));
+  const consider = matches.filter((m) => (m.status === "eligible" || m.status === "uncertain") && passesStudyFilter(m, studyFilter));
+  const ruledOut = matches.filter((m) => m.status === "near" && passesStudyFilter(m, studyFilter));
+  const screened = matches.filter((m) => m.status === "screened" && passesStudyFilter(m, studyFilter));
+
+  const ordered = active ? [...consider].sort((a, b) => prefScore(b, prefs) - prefScore(a, prefs) || ratioOf(b) - ratioOf(a)) : consider;
+
+  // Geography: soft grouping — nothing excluded, far trials collapsed below.
+  const thr = travelThreshold(survey.travel);
+  const canGroup = thr > 0 && ordered.some((m) => m.factors.proximityScore >= thr);
+  const inRange = canGroup ? ordered.filter((m) => m.factors.proximityScore >= thr) : ordered;
+  const farther = canGroup ? ordered.filter((m) => m.factors.proximityScore < thr) : [];
+
+  const shownEligible = consider.filter((m) => m.status === "eligible").length;
+  const shownUncertain = consider.filter((m) => m.status === "uncertain").length;
+
+  const card = (m: TrialMatch) => (
+    <DecisionCard key={m.nctId} m={m} saved={saved.has(m.nctId)} onSave={() => onToggleSave(m.nctId)} reasons={active ? prefReasons(m, prefs) : []} />
+  );
 
   return (
     <div className="scroll">
-      <div className="col">
-        <div className="agent-say">
-          <span className="av">✳</span>
-          <div className="body">
-            <div className="who">Coordinating agent</div>
-            <div className="summary">
-              Screened <b>{counts.poolTotal} recruiting trials</b> for <span className="mono">{conditionQuery}</span> and reasoned over the top{" "}
-              <b>{counts.reasoned}</b>. Here are the ones worth discussing with the care team — <b>{counts.eligible} eligible</b>, {counts.uncertain}{" "}
-              that need info. Nothing here is a recommendation; it&apos;s to help weigh the options and know what to ask.
-              <span className="live-flag">live · clinicaltrials.gov</span>
-            </div>
-          </div>
+      <div className="board board--results">
+        <div className="board-head">
+          <h2>Matches for you</h2>
+          <span className="live-flag">live · clinicaltrials.gov</span>
         </div>
-
-        <div className="prefs">
-          <div className="prefs-h">What matters most to this patient?</div>
-          <div className="prefs-row">
-            {PREFS.map((p) => (
-              <button key={p.key} className={`pref ${prefs.has(p.key) ? "on" : ""}`} title={p.hint} onClick={() => togglePref(p.key)}>
-                {p.label}
-              </button>
-            ))}
-          </div>
-          {active && <div className="prefs-note">Re-ordered by these priorities — based on trial facts, not a recommendation.</div>}
-        </div>
-
-        {savedList.length > 0 && (
-          <div className="tray">
-            <span className="tray-h">To discuss ({savedList.length})</span>
-            {savedList.map((m) => (
-              <span key={m.nctId} className="tray-chip mono">
-                {m.nctId}
-                <button onClick={() => toggleSave(m.nctId)} aria-label={`remove ${m.nctId}`}>
-                  ✕
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        <p className="results-caveat">
+          Eligibility shown here is generated by an AI model and is not a determination of eligibility. Only a study team can confirm whether
+          you qualify.
+        </p>
+        <p className="board-sub">
+          I screened <b>{counts.poolTotal} recruiting trials</b> for <span className="mono">{conditionQuery}</span> and looked closely at the top{" "}
+          <b>{counts.reasoned}</b>. These are worth discussing with your care team — nothing here is a recommendation; it&apos;s to help you weigh
+          the options and know what to ask.
+        </p>
 
         <div className="counts">
           <span className="count eligible">
-            <b>{counts.eligible}</b> eligible
+            <b>{shownEligible}</b> eligible
           </span>
           <span className="count uncertain">
-            <b>{counts.uncertain}</b> to confirm
+            <b>{shownUncertain}</b> to confirm
           </span>
           <span className="count near">
-            <b>{counts.near}</b> ruled out
+            <b>{ruledOut.length}</b> ruled out
           </span>
           <span className="count">
-            <b>{counts.screened}</b> screened
+            <b>{screened.length}</b> screened
           </span>
         </div>
 
-        {ordered.map((m) => (
-          <DecisionCard key={m.nctId} m={m} saved={saved.has(m.nctId)} onSave={() => toggleSave(m.nctId)} reasons={active ? prefReasons(m, prefs) : []} />
-        ))}
+        {consider.length === 0 && (
+          <div className="empty-note">No trials match the current study-type filter. Try switching it to “All” in the sidebar.</div>
+        )}
+
+        {inRange.map(card)}
+
+        {farther.length > 0 && (
+          <details className="farther">
+            <summary>
+              Farther from you ({farther.length}) <span>— beyond your travel range, kept just in case</span>
+            </summary>
+            <div className="farther-list">{farther.map(card)}</div>
+          </details>
+        )}
 
         {ruledOut.length > 0 && (
           <>
             <div className="section-h">
               Ruled out <span>— listed in full, fails closed</span>
             </div>
-            {ruledOut.map((m) => (
-              <DecisionCard key={m.nctId} m={m} saved={saved.has(m.nctId)} onSave={() => toggleSave(m.nctId)} reasons={[]} />
-            ))}
+            {ruledOut.map(card)}
           </>
         )}
 
         {screened.length > 0 && (
           <>
             <div className="section-h">
-              Screened <span>— matched the condition &amp; recruiting filters, not deeply reasoned this pass</span>
+              Screened <span>— matched your condition &amp; recruiting filters, not deeply reasoned this pass</span>
             </div>
             <div className="screened-list">
               {screened.map((m) => (
@@ -765,8 +1184,8 @@ function Results({ data }: { data: MatchResponse }) {
         )}
 
         <div className="disclaimer" style={{ marginTop: 20 }}>
-          Informational decision support for review with a care team — not medical advice, and it does not choose for you. Trial data is live from
-          ClinicalTrials.gov; synthetic personas only, no real patient data.
+          Informational decision support to review with your care team — not medical advice, and it does not choose for you. Trial data is live
+          from ClinicalTrials.gov; synthetic personas only in this demo.
         </div>
       </div>
     </div>
@@ -819,7 +1238,7 @@ function DecisionCard({ m, saved, onSave, reasons }: { m: TrialMatch; saved: boo
           </div>
           {m.brief.questionsToAsk.length > 0 && (
             <div className="qask">
-              <div className="qask-h">Questions to ask the care team</div>
+              <div className="qask-h">Questions to ask your care team</div>
               <ul>
                 {m.brief.questionsToAsk.map((q, i) => (
                   <li key={i}>{q}</li>

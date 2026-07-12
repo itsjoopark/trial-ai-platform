@@ -87,7 +87,7 @@ export const DecisionBriefSchema = z.object({
 export const LedgerSchema = z.object({
   headline: z
     .string()
-    .describe("One line: why she matches, or what rules her out. Coordinator's voice."),
+    .describe("One line, addressed to the patient in plain language: why this could be a fit, or what rules it out. No 'she/the patient' — speak to 'you'."),
   criteria: z
     .array(LedgerCriterionSchema)
     .describe(

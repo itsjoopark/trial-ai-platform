@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Trial — coordinator clinical trial matcher",
+  title: "Trial — demo clinical trial matcher",
   description:
-    "Paste a patient's notes; surface the recruiting ClinicalTrials.gov trials they're eligible for, with the inclusion/exclusion reasoning shown for every match.",
+    "Research prototype. Describe your situation and see recruiting ClinicalTrials.gov studies you may be eligible for, with the reasoning behind every match. Not medical advice; synthetic data only.",
+  // Consent-flow-spec §1.1 — the demo must not be publicly discoverable/indexed.
+  robots: { index: false, follow: false, nocache: true },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
