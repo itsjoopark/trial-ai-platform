@@ -2,43 +2,71 @@
    Trial — frontend styles
 
    Light is the DEFAULT theme; [data-theme="dark"] is the opt-in dark world.
-   Identity: cool light neutrals · a single periwinkle agent accent ·
-   monospace carries all clinical data · the verdict triad
-   (eligible / near / uncertain) is green / amber / red and never the accent.
-   Style everything through the tokens below — don't hardcode colors.
+   Identity (Trial design system — see /design.md): warm-neutral canvas ·
+   a single teal→blue gradient accent story · monospace carries all clinical
+   data · the verdict triad (eligible / near / uncertain) is green / amber / red
+   and never the accent. Style everything through the tokens below — don't
+   hardcode colors.
+
+   Phase 1 (tokens) maps the existing semantic token *values* to design.md §3
+   and exposes the design system's canonical token names (--canvas, --surface,
+   --border, --ink/-secondary/-tertiary, --blue/--teal/--gradient, --night*).
+   Later phases migrate components onto the canonical names + radii.
    ========================================================================== */
 
 :root {
-  /* ---- Light (default) ---- */
-  --bg:#f4f6f8; --bg-2:#eaeef2; --surface:#ffffff; --surface-2:#f3f6f8; --raise:#eef2f5;
-  --line:#dce3e9; --line-soft:#e7ecf0;
-  --ink:#14212b; --ink-2:#47586a; --ink-3:#7c8b99;
-  --agent:#4b46d4; --agent-hover:#3d38bd; --agent-2:#4f4bd6; --agent-ink:#ffffff; --agent-soft:#ecebfb;
+  /* ---- Light (default) · design.md §3 ---- */
+  /* canvas + surfaces (warm neutral; never pure white for the page) */
+  --canvas:#F7F5F2; --surface:#FFFFFF; --surface-sunken:#EFECE7; --border:#E4E1DC;
+  --bg:#F7F5F2; --bg-2:#EFECE7; --surface-2:#EFECE7; --raise:#EFECE7;
+  --line:#E4E1DC; --line-soft:#ECE9E4;
+  /* ink */
+  --ink:#1C1B1A; --ink-secondary:#57544F; --ink-tertiary:#8A867F;
+  --ink-2:#57544F; --ink-3:#8A867F;
+  /* accent — the logo's teal→blue gradient, blue is the single UI accent */
+  --teal:#3BA394; --mid:#3C87A4; --blue:#3D6BB3;
+  --gradient:linear-gradient(135deg,#3BA394 0%,#3C87A4 54%,#3D6BB3 100%);
+  --teal-tint:#E7F2F0; --blue-tint:#E9EFF7;
+  --danger:#B4483E;
+  /* legacy accent aliases now point at the blue accent (the app's --agent* API) */
+  --agent:#3D6BB3; --agent-hover:#335C97; --agent-2:#3D6BB3; --agent-ink:#ffffff; --agent-soft:#E9EFF7;
+  /* verdict triad (product meaning system — unchanged) */
   --eligible:#1f8a54; --eligible-bg:#e3f2e9; --near:#c33b30; --near-bg:#f9e5e2; --uncertain:#b27a12; --uncertain-bg:#f7eed9;
-  --halo:#e9ecfb;
+  --halo:#EAF2F0;
 
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  /* radius — adapted from shadcn preset b27GcrRo ("base-rhea": rounder corners).
-     Base 10px + derived scale; existing --r/--r-sm names preserved, rounded up. */
+  /* radius — legacy scale (in use). design.md §5 canonical radii exposed
+     alongside for the Phase 3 component migration. */
   --radius:10px;
-  --r-sm:10px;   /* small controls: buttons, chips, inputs (was 8px) */
-  --r:14px;      /* cards / panels (was 12px) */
+  --r-sm:10px;   /* small controls: buttons, chips, inputs */
+  --r:14px;      /* cards / panels */
   --r-lg:18px;   /* prominent surfaces */
-  /* motion — strong custom curves (the built-in CSS easings lack punch) */
+  --radius-input:8px; --radius-btn:12px; --radius-card:16px; --radius-tile:24px; --radius-pill:999px;
+  /* motion — strong custom curves (skill §1); --ease-out/--ease-in-out already match */
   --ease:cubic-bezier(.2,.7,.2,1);
-  --ease-out:cubic-bezier(.23,1,.32,1);      /* entrances / press-release: instant, responsive */
+  --ease-out:cubic-bezier(.23,1,.32,1);      /* entrances / exits / presses */
   --ease-in-out:cubic-bezier(.77,0,.175,1);  /* on-screen movement */
+  --ease-drawer:cubic-bezier(.32,.72,0,1);   /* sheets and drawers */
+  --dur-press:140ms; --dur-fast:200ms; --dur-slow:300ms;
   --t-press:130ms;  /* button press feedback */
   --t-hover:180ms;  /* hover color/border settle */
 }
 :root[data-theme="dark"] {
-  --bg:#0d1413; --bg-2:#101917; --surface:#152020; --surface-2:#1b2827; --raise:#20302e;
-  --line:#26332f; --line-soft:#1f2b29;
-  --ink:#eaf1ee; --ink-2:#9fb2ac; --ink-3:#6d827c;
-  --agent:#8b8cf6; --agent-hover:#a6a7fb; --agent-2:#a6a7fb; --agent-ink:#0d0f2a; --agent-soft:#1c1e40;
+  /* ---- Dark · design.md §3 (cool near-black night) ---- */
+  --night:#141A1E; --night-surface:#1E262C; --night-ink:#F2F1EF; --night-ink-2:#9BA4A9;
+  --canvas:#141A1E; --surface:#1E262C; --surface-sunken:#232D34; --border:#2C3841;
+  --bg:#141A1E; --bg-2:#1A2228; --surface-2:#232D34; --raise:#28333B;
+  --line:#2C3841; --line-soft:#232D34;
+  --ink:#F2F1EF; --ink-secondary:#9BA4A9; --ink-tertiary:#6E787E;
+  --ink-2:#9BA4A9; --ink-3:#6E787E;
+  --teal:#5CC1B0; --mid:#5AA6C4; --blue:#7CA0DB;
+  --gradient:linear-gradient(135deg,#5CC1B0 0%,#5AA6C4 54%,#7CA0DB 100%);
+  --teal-tint:#16302C; --blue-tint:#1E2A3A;
+  --danger:#E06A5F;
+  --agent:#7CA0DB; --agent-hover:#9BB7E6; --agent-2:#8FB0E0; --agent-ink:#0F1620; --agent-soft:#1E2A3A;
   --eligible:#4fc088; --eligible-bg:#12331f; --near:#e7776a; --near-bg:#341c19; --uncertain:#e2ab4d; --uncertain-bg:#332711;
-  --halo:#16211f;
+  --halo:#182028;
 }
 /* Reduced motion = gentler, not zero. Keep opacity/color fades that aid
    comprehension; drop movement (transforms) and looping animations. */
@@ -399,7 +427,7 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 
 /* decision card */
 .dcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 17px;margin-bottom:14px;}
-.dcard.eligible{border-color:color-mix(in srgb,var(--eligible) 40%,var(--line));box-shadow:var(--shadow,0 1px 2px rgba(20,33,43,.05));}
+.dcard.eligible{border-color:color-mix(in srgb,var(--eligible) 40%,var(--line));box-shadow:var(--shadow,0 1px 2px rgba(28,27,26,.05));}
 .dcard.near{background:color-mix(in srgb,var(--surface) 92%,var(--bg-2));}
 .dc-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;}
 .dc-title .nct{font-family:var(--mono);font-size:11px;color:var(--ink-3);text-decoration:none;display:inline-block;}
@@ -756,7 +784,7 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 
 /* ---- Your next steps: on-screen action panel ---- */
 .ns-overlay{position:fixed;inset:0;z-index:60;background:color-mix(in srgb,var(--ink) 34%,transparent);display:flex;justify-content:center;align-items:flex-start;padding:5vh 16px;overflow-y:auto;animation:reveal .18s var(--ease);}
-.ns-panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 18px 50px rgba(20,33,43,.24);width:100%;max-width:640px;display:flex;flex-direction:column;max-height:90vh;}
+.ns-panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 18px 50px rgba(28,27,26,.24);width:100%;max-width:640px;display:flex;flex-direction:column;max-height:90vh;}
 .ns-head{display:flex;align-items:flex-start;gap:14px;padding:18px 20px 14px;border-bottom:1px solid var(--line-soft);}
 .ns-head h2{font-size:19px;font-weight:680;letter-spacing:-.01em;margin:0;}
 .ns-sub{font-size:13px;color:var(--ink-2);line-height:1.5;margin:5px 0 0;max-width:56ch;}

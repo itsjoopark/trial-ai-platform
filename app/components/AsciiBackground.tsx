@@ -15,7 +15,8 @@ function prefersReducedMotion(): boolean {
 
 function palette(): { accent: string } {
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
-  return { accent: dark ? "139, 140, 246" : "75, 70, 212" };
+  // Trial accent (design.md §3): --blue #3D6BB3 light · #7CA0DB dark
+  return { accent: dark ? "124, 160, 219" : "61, 107, 179" };
 }
 
 /** Organic contours + clinical motifs (cell rings, helix, EKG, scale ticks). */
