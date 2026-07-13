@@ -85,17 +85,17 @@ export const DecisionBriefSchema = z.object({
   offers: z
     .string()
     .describe(
-      "What this trial could offer or is studying, in plain language a patient can read. Frame as POTENTIAL and as what the trial is testing — never a promise of benefit. Be phase-honest: Phase 1 tests safety/dosing and benefit is unproven; an observational study contributes data and provides no treatment. No efficacy claims.",
+      "What this trial could offer or is studying, in plain language a patient can read. Frame as POTENTIAL and as what the trial is testing — never a promise of benefit. Be phase-honest: Phase 1 tests safety/dosing and benefit is unproven; an observational study contributes data and provides no treatment. No efficacy claims. Keep it tight: 1–2 short sentences, ~30 words max (hard cap) — lead with the essential and stop.",
     ),
   commitment: z
     .string()
     .describe(
-      "What the trial asks of the patient, grounded in its design: whether the arm is randomized or placebo/blinding is possible, visits/procedures/biopsies implied, travel to the site, and study length. Concrete and honest.",
+      "What the trial asks of the patient, grounded in its design: whether the arm is randomized or placebo/blinding is possible, visits/procedures/biopsies implied, travel to the site, and study length. Concrete and honest. Keep it tight: 1–2 short sentences, ~30 words max (hard cap) — the most demanding asks only.",
     ),
   uncertainty: z
     .string()
     .describe(
-      "What is experimental or unknown, appropriate to the phase and design. Name the real uncertainty plainly rather than reassuring.",
+      "What is experimental or unknown, appropriate to the phase and design. Name the real uncertainty plainly rather than reassuring. Keep it tight: 1–2 short sentences, ~30 words max (hard cap) — the single biggest open question first.",
     ),
   questionsToAsk: z
     .array(z.string())

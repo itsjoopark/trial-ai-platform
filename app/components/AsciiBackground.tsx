@@ -69,6 +69,7 @@ function drawFrame(
   mouse: Mouse | null,
   t: number,
   staticField: boolean,
+  subtle = false,
 ) {
   ctx.clearRect(0, 0, w, h);
   const { accent } = palette();
@@ -80,6 +81,8 @@ function drawFrame(
 
   const cols = Math.ceil(w / CELL);
   const rows = Math.ceil(h / CELL);
+  const minV = subtle ? 0.07 : 0.055;
+  const maxAlpha = subtle ? 0.1 : 0.2;
 
   for (let yi = 0; yi < rows; yi++) {
     for (let xi = 0; xi < cols; xi++) {
@@ -90,23 +93,26 @@ function drawFrame(
 
       let boost = 0;
       if (mouse) {
+        const radius = subtle ? 90 : 130;
         const md = Math.hypot(x - mouse.x, y - mouse.y);
-        if (md < 130) boost = (1 - md / 130) * 0.4;
+        if (md < radius) boost = (1 - md / radius) * (subtle ? 0.12 : 0.4);
       }
       v += boost;
-      if (v < 0.055) continue;
+      if (v < minV) continue;
 
-      const alpha = Math.min(0.2, 0.035 + v * 0.18 + boost * 0.08);
+      const alpha = subtle
+        ? Math.min(maxAlpha, 0.018 + v * 0.075 + boost * 0.03)
+        : Math.min(maxAlpha, 0.035 + v * 0.18 + boost * 0.08);
 
       if (v > 0.48 && (xi + yi) % 10 === 0) {
-        ctx.fillStyle = `rgba(${accent}, ${Math.min(0.28, alpha * 1.35)})`;
+        ctx.fillStyle = `rgba(${accent}, ${Math.min(subtle ? 0.14 : 0.28, alpha * 1.35)})`;
         ctx.fillRect(x - 2, y - 2, 4, 4);
         continue;
       }
 
       let ox = 0;
       let oy = 0;
-      if (mouse && boost > 0) {
+      if (mouse && boost > 0 && !subtle) {
         const ang = Math.atan2(y - mouse.y, x - mouse.x);
         const push = boost * 7;
         ox = Math.cos(ang) * push;
@@ -119,25 +125,37 @@ function drawFrame(
   }
 }
 
-export default function AsciiBackground({ trackRef }: { trackRef: RefObject<HTMLElement | null> }) {
+export default function AsciiBackground({
+  trackRef: trackRefProp,
+  variant = "default",
+  className = "ascii-bg",
+}: {
+  trackRef?: RefObject<HTMLElement | null>;
+  variant?: "default" | "subtle";
+  className?: string;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const mouseRef = useRef<Mouse | null>(null);
   const rafRef = useRef<number>(0);
   const tRef = useRef(0);
+  const subtle = variant === "subtle";
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const host = hostRef.current;
-    const track = trackRef.current;
+    const track = (trackRefProp ?? hostRef).current;
     if (!canvas || !host || !track) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     const reduced = prefersReducedMotion();
+    const staticField = reduced || subtle;
     let w = 0;
     let h = 0;
+
+    const paint = () => drawFrame(ctx, w, h, mouseRef.current, tRef.current, staticField, subtle);
 
     const resize = () => {
       const rect = host.getBoundingClientRect();
@@ -149,23 +167,23 @@ export default function AsciiBackground({ trackRef }: { trackRef: RefObject<HTML
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawFrame(ctx, w, h, mouseRef.current, tRef.current, reduced);
+      paint();
     };
 
     const onMove = (e: MouseEvent) => {
       const rect = host.getBoundingClientRect();
       mouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      if (reduced) drawFrame(ctx, w, h, mouseRef.current, 0, true);
+      if (staticField) paint();
     };
 
     const onLeave = () => {
       mouseRef.current = null;
-      if (reduced) drawFrame(ctx, w, h, null, 0, true);
+      if (staticField) paint();
     };
 
     const tick = (now: number) => {
       tRef.current = now;
-      drawFrame(ctx, w, h, mouseRef.current, now, false);
+      drawFrame(ctx, w, h, mouseRef.current, now, false, subtle);
       rafRef.current = requestAnimationFrame(tick);
     };
 
@@ -176,10 +194,10 @@ export default function AsciiBackground({ trackRef }: { trackRef: RefObject<HTML
     track.addEventListener("mousemove", onMove);
     track.addEventListener("mouseleave", onLeave);
 
-    const themeObs = new MutationObserver(() => drawFrame(ctx, w, h, mouseRef.current, tRef.current, reduced));
+    const themeObs = new MutationObserver(paint);
     themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-    if (!reduced) rafRef.current = requestAnimationFrame(tick);
+    if (!staticField) rafRef.current = requestAnimationFrame(tick);
 
     return () => {
       ro.disconnect();
@@ -188,10 +206,10 @@ export default function AsciiBackground({ trackRef }: { trackRef: RefObject<HTML
       track.removeEventListener("mouseleave", onLeave);
       cancelAnimationFrame(rafRef.current);
     };
-  }, [trackRef]);
+  }, [trackRefProp, subtle]);
 
   return (
-    <div ref={hostRef} className="ascii-bg" aria-hidden>
+    <div ref={hostRef} className={className} aria-hidden>
       <canvas ref={canvasRef} />
     </div>
   );

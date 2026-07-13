@@ -19,6 +19,7 @@ import AgentAvatar from "@/app/components/AgentAvatar";
 import TrialLogo from "@/app/components/TrialLogo";
 import AsciiBackground from "@/app/components/AsciiBackground";
 import HeroVideo from "@/app/components/HeroVideo";
+import NavAuth from "@/app/components/NavAuth";
 import ProductCarousel from "@/app/components/ProductCarousel";
 import type { TrialMatch, Criterion, Verdict, MatchStatus } from "@/lib/types";
 import { deriveStatus, metCountOf } from "@/lib/verdict";
@@ -233,8 +234,23 @@ export default function Page() {
 
   const appRef = useRef<HTMLDivElement>(null);
 
+  // load persisted theme once (localStorage, trial: prefix)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("trial:theme");
+      if (saved === "light" || saved === "dark") setTheme(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem("trial:theme", theme);
+    } catch {
+      /* ignore */
+    }
   }, [theme]);
 
   /* ---- transitions ---- */
@@ -605,15 +621,7 @@ export default function Page() {
         ))}
       </div>
       <div className="top-right">
-        <span className="top-actions">
-          <button
-            className="tbtn tbtn-icon"
-            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          >
-            {theme === "dark" ? "☀" : "☾"}
-          </button>
-        </span>
+        <NavAuth portalMode={portalMode} />
       </div>
     </div>
   );
@@ -719,11 +727,21 @@ export default function Page() {
               (() => {
                 const t = match.matches.find((m) => m.nctId === referTrial);
                 return t ? (
-                  <Refer trial={t} profile={profile} location={match.location} forkNote={forkNote} onBack={() => setPhase("results")} />
+                  <Refer trial={t} profile={profile} onBack={() => setPhase("results")} />
                 ) : null;
               })()}
           </div>
-          {showNextSteps && match && <NextStepsPanel matches={match.matches} onClose={() => setShowNextSteps(false)} />}
+          {showNextSteps && match && (
+            <NextStepsPanel
+              matches={match.matches}
+              onClose={() => setShowNextSteps(false)}
+              onRefer={(nctId) => {
+                setShowNextSteps(false);
+                setReferTrial(nctId);
+                setPhase("refer");
+              }}
+            />
+          )}
         </div>
       ) : (
         <>
@@ -748,7 +766,7 @@ export default function Page() {
             {phase === "connect" && (
               <Connect onPick={readRecords} onBack={() => setPhase("landing")} />
             )}
-            {phase === "home" && <AppFooter />}
+            <AppFooter theme={theme} onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} />
           </div>
         </>
       )}
@@ -955,6 +973,7 @@ function Home({
   onEnter: () => void;
   onSelectPatient: () => void;
 }) {
+  const productRef = useRef<HTMLElement>(null);
   const copy = {
     patient: {
       kicker: "Patient portal",
@@ -1003,7 +1022,8 @@ function Home({
           </div>
         </div>
       </div>
-      <section className="home-product" aria-label="Product information">
+      <section ref={productRef} className="home-product" aria-label="Product information">
+        <AsciiBackground trackRef={productRef} variant="subtle" className="ascii-bg ascii-bg--panel" />
         <div className="home-product__inner">
           <header className="home-product__head">
             <p className="home-product__kicker">Product</p>
@@ -1016,13 +1036,26 @@ function Home({
   );
 }
 
-function AppFooter() {
+function AppFooter({ theme, onTheme }: { theme: "light" | "dark"; onTheme: () => void }) {
   return (
     <footer className="site-footer">
       <div className="site-footer__inner">
-        <div className="site-footer__brand">
-          <strong>Trial</strong>
-          <span>Clinical trial matching with transparent eligibility reasoning.</span>
+        <div className="site-footer__top">
+          <div className="site-footer__brand">
+            <strong>Trial</strong>
+            <span>Clinical trial matching with transparent eligibility reasoning.</span>
+          </div>
+          <div className="site-footer__prefs">
+            <span className="site-footer__prefs-label">Appearance</span>
+            <button
+              type="button"
+              className="footer-theme"
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              onClick={onTheme}
+            >
+              {theme === "dark" ? "☀ Light" : "☾ Dark"}
+            </button>
+          </div>
         </div>
         <div className="site-footer__cols">
           <section>
@@ -1126,24 +1159,21 @@ function Landing({
           <h1 className={entered ? "in" : undefined} suppressHydrationWarning>
             {greeting}
           </h1>
-          <p>
-            Share your notes or describe your situation. I&apos;ll read it into a structured profile, then screen live against recruiting
-            ClinicalTrials.gov studies and show the reasoning behind every match. Set your scope below if you like — it&apos;s optional.
+          <p className="hero-lede">
+            Share your notes or describe your situation — I&apos;ll screen you live against recruiting ClinicalTrials.gov studies and show the
+            reasoning behind every match. It takes about two minutes:
           </p>
-          <div className="intro-steps" aria-label="What to expect">
-            <div className="intro-steps__h">Three quick steps — about 2 minutes:</div>
-            <ol>
-              <li>
-                <span className="isn">1</span> Profile setup — I read your note into a structured profile
-              </li>
-              <li>
-                <span className="isn">2</span> A few profile-specific questions — only the gaps that change your matches
-              </li>
-              <li>
-                <span className="isn">3</span> Review &amp; edit — you correct anything before I search
-              </li>
-            </ol>
-          </div>
+          <ol className="hero-steps" aria-label="How it works">
+            <li>
+              <span className="isn">1</span> I read your note into a structured profile
+            </li>
+            <li>
+              <span className="isn">2</span> A few questions — only the gaps that change your matches
+            </li>
+            <li>
+              <span className="isn">3</span> You review and edit before I search
+            </li>
+          </ol>
           <div className="paste">
             <textarea
               value={note}
@@ -1156,49 +1186,49 @@ function Landing({
               }}
               placeholder="Paste your notes or describe your situation…"
             />
+            {/* Composer action bar: bring-your-records options dock bottom-left
+                (Claude-desktop style), the send button anchors bottom-right. The
+                per-option descriptions live in the title tooltips. */}
             <div className="row">
-              <span className="hint">⌘↵ to send</span>
+              <div className="paste-actions">
+                <button
+                  type="button"
+                  className="composer-btn"
+                  onClick={() => fileRef.current?.click()}
+                  title="Upload a PDF — a visit summary or pathology report. I'll read the text."
+                >
+                  <span className="composer-btn__ic" aria-hidden>
+                    ⬆
+                  </span>
+                  Upload PDF
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="application/pdf"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) onPdf(f);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  className="composer-btn"
+                  onClick={onConnect}
+                  title="Connect my medical records — pull your chart from your provider (SMART on FHIR). Demo uses a public sandbox."
+                >
+                  <span className="composer-btn__ic" aria-hidden>
+                    ⚕
+                  </span>
+                  Connect records
+                  <span className="composer-btn__badge">FHIR</span>
+                </button>
+              </div>
               <span className="sp" />
               <button className="btn go" onClick={() => onRead(note)}>
                 Get started →
-              </button>
-            </div>
-          </div>
-
-          {/* Other ways in: upload a document, or pull your chart via SMART on FHIR. */}
-          <div className="entry-more">
-            <span className="entry-more__or">or bring your records in</span>
-            <div className="entry-opts">
-              <button type="button" className="entry-opt" onClick={() => fileRef.current?.click()}>
-                <span className="entry-opt__ic" aria-hidden>
-                  ⬆
-                </span>
-                <span className="entry-opt__body">
-                  <span className="entry-opt__t">Upload a PDF</span>
-                  <span className="entry-opt__d">A visit summary or pathology report — I&apos;ll read the text.</span>
-                </span>
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="application/pdf"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) onPdf(f);
-                  e.target.value = "";
-                }}
-              />
-              <button type="button" className="entry-opt" onClick={onConnect}>
-                <span className="entry-opt__ic" aria-hidden>
-                  ⚕
-                </span>
-                <span className="entry-opt__body">
-                  <span className="entry-opt__t">
-                    Connect my medical records <span className="entry-opt__badge">FHIR</span>
-                  </span>
-                  <span className="entry-opt__d">Pull your chart from your provider (SMART on FHIR). Demo uses a public sandbox.</span>
-                </span>
               </button>
             </div>
           </div>
@@ -1484,20 +1514,10 @@ function Capture({
                 </div>
               </div>
             ) : busy || !profile ? (
-              <div className="readout">
-                <div className="rh">
-                  <span className="pulse" /> Building your profile
-                </div>
-                <div style={{ padding: "14px 15px" }}>
-                  <div className="working">
-                    <span className="dots">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    reading your note…
-                  </div>
-                </div>
+              <div className="thinking" role="status" aria-live="polite">
+                <span className="shimmer-text">
+                  {origin === "fhir" ? "Building your profile from your record…" : "Building your profile from your note…"}
+                </span>
               </div>
             ) : (
               <>
@@ -1619,27 +1639,25 @@ function ClarifyCard({
           <div className="divl" />
         </div>
       ))}
-      <div className="opt agent" onClick={() => onAnswer("Let my guide decide from the note")}>
-        <div className="num">⤳</div>
-        <div>
-          <div className="ot">Let my guide decide from the note</div>
-        </div>
+      {/* Free-text answer replaces the old "let my guide decide" option — it sits
+          as the last choice in the list, above the Back/Skip footer. */}
+      <div className="own">
+        <span className="own__ic" aria-hidden>
+          ✎
+        </span>
+        <input
+          value={own}
+          onChange={(e) => setOwn(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && own.trim()) {
+              e.preventDefault();
+              onAnswer(own.trim());
+            }
+          }}
+          placeholder="Or type your own answer…"
+        />
       </div>
       <div className="cfoot">
-        <div className="own">
-          <span>✎</span>
-          <input
-            value={own}
-            onChange={(e) => setOwn(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && own.trim()) {
-                e.preventDefault();
-                onAnswer(own.trim());
-              }
-            }}
-            placeholder="Or type your own answer…"
-          />
-        </div>
         {step > 0 && (
           <button className="ghost" onClick={onBack}>
             ← Back
@@ -1887,7 +1905,7 @@ function travelLabel(t: TravelPref | null): string {
 /** The four summary buckets — canonical counts, always reconcile to the pool total. */
 const COUNT_BUCKETS: { key: MatchStatus; cls: string; label: string }[] = [
   { key: "eligible", cls: "eligible", label: "eligible" },
-  { key: "uncertain", cls: "uncertain", label: "to confirm" },
+  { key: "uncertain", cls: "uncertain", label: "pending" },
   { key: "near", cls: "near", label: "ruled out" },
   { key: "screened", cls: "", label: "not yet reasoned" },
 ];
@@ -2282,7 +2300,6 @@ const REFER_SECTIONS: { id: string; label: string }[] = [
   { id: "refer-elig", label: "Eligibility" },
   { id: "refer-ready", label: "Before you call" },
   { id: "refer-contacts", label: "Contacts" },
-  { id: "refer-packets", label: "Packets" },
   { id: "refer-auth", label: "Refer" },
   { id: "refer-timeline", label: "Timeline" },
 ];
@@ -2290,18 +2307,53 @@ const REFER_SECTIONS: { id: string; label: string }[] = [
 function Refer({
   trial,
   profile,
-  location,
-  forkNote,
   onBack,
 }: {
   trial: TrialMatch;
   profile: Profile;
-  location: LocationInfo;
-  forkNote: string | null;
   onBack: () => void;
 }) {
   const gaps = trial.criteria.filter(isGap);
   const jump = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Packet B (the full pre-screen profile shared with the study coordinator) is
+  // a disclosure — it opens as its own page ONLY after the patient agrees to be
+  // referred, never alongside the pre-consent referral prep.
+  const [referred, setReferred] = useState(false);
+
+  if (referred) {
+    return (
+      <div className="scroll">
+        <div className="board refer">
+          <div className="refer-head">
+            <button className="ghost" onClick={onBack}>
+              ← Back to matches
+            </button>
+            <div className="refer-title">
+              <a className="nct" href={trial.url} target="_blank" rel="noopener noreferrer">
+                {trial.nctId} ↗
+              </a>
+              <h2>{trial.title}</h2>
+              <div className="refer-sub">
+                {trial.phase} · {trial.sponsor} · ◎ {trial.factors.nearestSite}
+              </div>
+            </div>
+          </div>
+          <div className="auth-done">
+            <div className="auth-done__h">✓ Referral prepared</div>
+            <p>
+              In production, {trial.sponsor} would receive your consented pre-screen packet for {trial.nctId} — a referral-ready candidate you
+              initiated, not a row in a purchased list.
+            </p>
+            <div className="auth-demo">Demo: no data was actually sent.</div>
+          </div>
+          <div id="refer-packets">
+            <PacketA trial={trial} />
+            <PacketB trial={trial} profile={profile} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="scroll">
@@ -2334,11 +2386,7 @@ function Refer({
         <EligibilityTable trial={trial} />
         <ReadinessChecklist gaps={gaps} />
         <ContactRouting trial={trial} />
-        <div id="refer-packets" className="refer-sec">
-          <PacketA trial={trial} gaps={gaps} location={location} forkNote={forkNote} />
-          <PacketB trial={trial} profile={profile} />
-        </div>
-        <ReferralAuthorization trial={trial} profile={profile} />
+        <ReferralAuthorization trial={trial} profile={profile} onAuthorize={() => setReferred(true)} />
         <ReferTimeline gaps={gaps} trial={trial} />
       </div>
     </div>
@@ -2354,6 +2402,28 @@ function EligibilityTable({ trial }: { trial: TrialMatch }) {
     },
     { met: 0, not_met: 0, confirm: 0, unknown: 0 } as Record<CritState, number>,
   );
+  const indexed = trial.criteria.map((c, i) => ({ c, i }));
+  const attnRows = indexed.filter((x) => critState(x.c) !== "met");
+  const metRows = indexed.filter((x) => critState(x.c) === "met");
+  const row = ({ c, i }: { c: Criterion; i: number }) => {
+    const st = CRIT_STATE_META[critState(c)];
+    return (
+      <div key={i} className={`ct-row ${st.cls}`}>
+        <span className="ct-glyph">{st.glyph}</span>
+        <span className="ct-req">
+          <span className={`ck ${c.kind}`}>{c.kind}</span> {c.requirement}
+          {c.evidence ? <span className="ct-ev">{c.evidence}</span> : null}
+        </span>
+        <span className="ct-status">{st.label}</span>
+        <span className="ct-prov">
+          <SourceBadge source={c.provenance ?? "not_documented"} />
+        </span>
+        <a className="ct-src" href={trial.url} target="_blank" rel="noopener noreferrer" title="See the trial's eligibility criteria on ClinicalTrials.gov">
+          source ↗
+        </a>
+      </div>
+    );
+  };
   return (
     <section id="refer-elig" className="refer-sec">
       <div className="refer-sec__h">How your record lines up ({trial.criteria.length} criteria)</div>
@@ -2364,27 +2434,19 @@ function EligibilityTable({ trial }: { trial: TrialMatch }) {
         <span className="unknown">{counts.unknown} unknown</span>
         {counts.not_met > 0 && <span className="notmet">{counts.not_met} not met</span>}
       </div>
-      <div className="ct-table">
-        {trial.criteria.map((c, i) => {
-          const st = CRIT_STATE_META[critState(c)];
-          return (
-            <div key={i} className={`ct-row ${st.cls}`}>
-              <span className="ct-glyph">{st.glyph}</span>
-              <span className="ct-req">
-                <span className={`ck ${c.kind}`}>{c.kind}</span> {c.requirement}
-                {c.evidence ? <span className="ct-ev">{c.evidence}</span> : null}
-              </span>
-              <span className="ct-status">{st.label}</span>
-              <span className="ct-prov">
-                <SourceBadge source={c.provenance ?? "not_documented"} />
-              </span>
-              <a className="ct-src" href={trial.url} target="_blank" rel="noopener noreferrer" title="See the trial's eligibility criteria on ClinicalTrials.gov">
-                source ↗
-              </a>
-            </div>
-          );
-        })}
-      </div>
+      {/* Met criteria are collapsed by default — the rows that need attention
+          (to confirm / unknown / not met) lead; "met" opens on demand. */}
+      {attnRows.length > 0 && <div className="ct-table">{attnRows.map(row)}</div>}
+      {metRows.length > 0 && (
+        <details className="ct-met">
+          <summary>
+            <span className="ct-met__label">
+              {metRows.length} criteri{metRows.length === 1 ? "on" : "a"} you already meet
+            </span>
+          </summary>
+          <div className="ct-table">{metRows.map(row)}</div>
+        </details>
+      )}
     </section>
   );
 }
@@ -2481,9 +2543,34 @@ function ContactRouting({ trial }: { trial: TrialMatch }) {
   );
 }
 
-/* §5 Packet A — "Bring this to your oncologist" one-pager. */
-function PacketA({ trial, gaps, location, forkNote }: { trial: TrialMatch; gaps: Criterion[]; location: LocationInfo; forkNote: string | null }) {
-  void location;
+/* §5 Packet A — "Bring this to your oncologist": a ready-to-send note the patient
+   hands to their care team to ask about this trial and request a referral. */
+function PacketA({ trial }: { trial: TrialMatch }) {
+  const gaps = trial.criteria.filter(isGap).length;
+  const lineup =
+    trial.total > 0
+      ? `Working from my own records, my profile appears to line up with ${trial.metCount} of ${trial.total} of the published eligibility criteria${
+          gaps > 0 ? `, with ${gaps} item${gaps > 1 ? "s" : ""} left to confirm` : ""
+        }. I understand this isn't a determination of eligibility — the study team makes that call.\n\n`
+      : "";
+  const note = `Subject: Asking about a clinical trial — ${trial.nctId}
+
+Dear Dr. [your doctor's name],
+
+Before my next appointment, I wanted to ask your opinion about a clinical trial I've been looking into:
+
+    ${trial.title}
+    ${trial.nctId} · ${trial.phase} · ${trial.sponsor}
+    Nearest listed site: ${trial.factors.nearestSite}
+    Details: ${trial.url}
+
+${lineup}Could you let me know:
+    1. Whether this trial is worth pursuing given my current treatment plan, and
+    2. If so, whether you'd be willing to refer me or support a pre-screening?
+
+Thank you,
+[Your name]`;
+
   return (
     <div className="packet packet-a">
       <div className="packet-head">
@@ -2493,36 +2580,16 @@ function PacketA({ trial, gaps, location, forkNote }: { trial: TrialMatch; gaps:
         </button>
       </div>
       <div className="packet-body">
-        <h3>
-          {trial.nctId} — {trial.title}
-        </h3>
-        <div className="packet-meta">
-          {trial.phase} · {trial.sponsor} · nearest listed site: {trial.factors.nearestSite}
+        <h3>Note for your doctor · {trial.nctId}</h3>
+        <p className="packet-lead">
+          A ready-to-send message asking your care team about this trial and whether they&apos;ll support a referral. Edit the bracketed parts,
+          then copy or print it.
+        </p>
+        <pre className="draft-body">{note}</pre>
+        <CopyButton text={note} label="Copy note" />
+        <div className="packet-framing">
+          A conversation starter, not medical advice or an eligibility determination — your care team decides what&apos;s right for you.
         </div>
-        <div className="packet-block">
-          <b>How the record lines up:</b> {trial.metCount}/{trial.total} criteria met · {gaps.length} to confirm before screening.
-        </div>
-        {gaps.length > 0 && (
-          <div className="packet-block">
-            <b>To close first:</b>
-            <ul>
-              {gaps
-                .map((c) => ({ c, lead: classifyGap(c) }))
-                .sort((a, b) => a.lead.order - b.lead.order)
-                .map(({ c, lead }, i) => (
-                  <li key={i}>
-                    {c.requirement} <span className="packet-band">({lead.band})</span>
-                  </li>
-                ))}
-            </ul>
-          </div>
-        )}
-        {forkNote && (
-          <div className="packet-block fork">
-            <b>Timing tradeoff:</b> {forkNote}
-          </div>
-        )}
-        <div className="packet-framing">A conversation starter, not a recommendation. This is not an eligibility determination — the study team confirms that.</div>
       </div>
     </div>
   );
@@ -2589,8 +2656,8 @@ function PacketB({ trial, profile }: { trial: TrialMatch; profile: Profile }) {
 }
 
 /* §7 — referral = the authorization moment (front-end only; synthetic demo). */
-function ReferralAuthorization({ trial, profile }: { trial: TrialMatch; profile: Profile }) {
-  const [stage, setStage] = useState<"idle" | "review" | "done">("idle");
+function ReferralAuthorization({ trial, profile, onAuthorize }: { trial: TrialMatch; profile: Profile; onAuthorize: () => void }) {
+  const [stage, setStage] = useState<"idle" | "review">("idle");
   return (
     <section id="refer-auth" className="refer-sec">
       <div className="refer-sec__h">Refer me to this study</div>
@@ -2624,7 +2691,7 @@ function ReferralAuthorization({ trial, profile }: { trial: TrialMatch; profile:
             <span className="auth-v">One year · revocable at any time · this trial only.</span>
           </div>
           <div className="auth-actions">
-            <button className="btn go" onClick={() => setStage("done")}>
+            <button className="btn go" onClick={onAuthorize}>
               Authorize &amp; refer
             </button>
             <button className="ghost" onClick={() => setStage("idle")}>
@@ -2632,16 +2699,6 @@ function ReferralAuthorization({ trial, profile }: { trial: TrialMatch; profile:
             </button>
           </div>
           <div className="auth-demo">Demo: nothing is transmitted and this is synthetic data — this screen shows the authorization the real flow would capture.</div>
-        </div>
-      )}
-      {stage === "done" && (
-        <div className="auth-done">
-          <div className="auth-done__h">✓ Referral prepared</div>
-          <p>
-            In production, {trial.sponsor} would receive your consented pre-screen packet for {trial.nctId} — a referral-ready candidate you
-            initiated, not a row in a purchased list.
-          </p>
-          <div className="auth-demo">Demo: no data was actually sent.</div>
         </div>
       )}
     </section>
@@ -2661,7 +2718,7 @@ function ReferTimeline({ gaps, trial }: { gaps: Criterion[]; trial: TrialMatch }
         First contact to first dose is commonly <b>2–8 weeks</b> (estimated). You&apos;re at the very start — initial contact. The window matters:
         after a screen failure, decline while waiting is a real clinical risk, so close the time-sensitive items early.
       </p>
-      <div className="enroll" style={{ marginBottom: 10 }}>
+      <div className="enroll-detail" style={{ marginBottom: 10 }}>
         <span className="enroll-k">Enrollment</span>
         <span className="enroll-v">{trial.factors.enrollmentWindow || "status not published — confirm with the site"}</span>
       </div>
@@ -2716,8 +2773,10 @@ function Results({
   const { counts, matches, conditionQuery, location } = data;
   const active = prefs.size > 0;
   const [showAllScreened, setShowAllScreened] = useState(false);
-  // Total open to-confirm items across the reasoned trials — the Next Steps count.
-  const openConfirms = matches.reduce((n, m) => n + m.criteria.filter((c) => c.verdict === "confirm").length, 0);
+  // "Your next steps" is only meaningful once the patient is fully eligible for at
+  // least one trial — those are the ones worth acting on. Uncertain trials still
+  // have open questions (surfaced inline on the card); ruled-out trials are moot.
+  const eligibleCount = matches.filter((m) => m.status === "eligible").length;
 
   // Canonical counts (from the single source of truth on the server). These four
   // buckets ALWAYS sum to poolTotal, so the header and buckets can never disagree.
@@ -2780,12 +2839,11 @@ function Results({
         <div className="board-head">
           <h2>Matches for you</h2>
           <div className="board-head-r">
-            {openConfirms > 0 && (
+            {eligibleCount > 0 && (
               <button className="nextsteps-btn" onClick={onOpenNextSteps}>
-                Your next steps <span className="ns-count">{openConfirms}</span>
+                Your next steps <span className="ns-count">{eligibleCount}</span>
               </button>
             )}
-            <span className="live-flag">live · clinicaltrials.gov</span>
           </div>
         </div>
 
@@ -2802,10 +2860,7 @@ function Results({
           </div>
         )}
 
-        <p className="results-caveat">
-          Eligibility shown here is generated by an AI model and is not a determination of eligibility. Only a study team can confirm whether
-          you qualify.
-        </p>
+        {/* Stat line leads — the counts that matter, not a paragraph of prose. */}
         <p className="board-sub">
           Screened <b>{counts.poolTotal} recruiting trials</b> for <span className="mono">{conditionQuery}</span> · reasoned the top{" "}
           <b>{counts.reasoned}</b> in depth
@@ -2815,11 +2870,60 @@ function Results({
               · showing <b>{totalShown}</b> after filters
             </>
           ) : null}
-          . These are worth discussing with your care team — nothing here is a recommendation; it&apos;s to help you weigh the options and know
+        </p>
+
+        {/* Status buckets promoted to the primary summary + filter, directly under the stat line. */}
+        <div className="counts">
+          {COUNT_BUCKETS.map((b) => (
+            <button
+              key={b.key}
+              className={`count ${b.cls} ${statusFilter === b.key ? "on" : ""}`}
+              aria-pressed={statusFilter === b.key}
+              onClick={() => onStatusFilter(statusFilter === b.key ? "all" : b.key)}
+            >
+              <span className="count-dot" aria-hidden />
+              <b>{bucketCounts[b.key]}</b> {b.label}
+            </button>
+          ))}
+          <span className="count total" title="Every bucket sums to the total screened.">
+            <b>{reconTotal}</b> screened total
+          </span>
+          {statusFilter !== "all" && (
+            <button className="count clear-status" onClick={() => onStatusFilter("all")}>
+              show all ✕
+            </button>
+          )}
+        </div>
+
+        {/* Non-directive framing — kept, but demoted from stat-weight prose to a quiet line. */}
+        <p className="board-reassure">
+          These are worth discussing with your care team — nothing here is a recommendation; it&apos;s to help you weigh the options and know
           what to ask.
         </p>
 
-        {/* §5.2 — NGS gap reframed as an action, not a dead end. Honest: no fabricated count. */}
+        {/* Box soup collapsed: the AI caveat and location status become quiet inline captions. */}
+        <div className="board-notes">
+          <span className="bn ai">
+            <span className="bn-ic" aria-hidden>
+              ⓘ
+            </span>{" "}
+            AI-generated eligibility — not a determination; only a study team can confirm you qualify.
+          </span>
+          <span className={`bn loc ${location.applied ? "on" : ""}`}>
+            <span className="bn-ic" aria-hidden>
+              ◎
+            </span>{" "}
+            {location.applied ? (
+              <>
+                Near <b>{location.label}</b> ({travelLabel(location.travel)}) — farther trials kept below, never dropped.
+              </>
+            ) : (
+              <>No distance limit — showing trials anywhere.</>
+            )}
+          </span>
+        </div>
+
+        {/* §5.2 — NGS gap reframed as an action, not a dead end. Demoted to a lighter inline nudge. */}
         {showNgsAction && (
           <div className="ngs-action">
             <span className="ngs-action__ic" aria-hidden>
@@ -2837,45 +2941,10 @@ function Results({
           </div>
         )}
 
-        {/* Location filter status — always explicit about whether distance was applied. */}
-        <div className={`loc-banner ${location.applied ? "on" : "off"}`}>
-          {location.applied ? (
-            <>
-              ◎ Filtered to trials with a site near <b>{location.label}</b> ({travelLabel(location.travel)}) — matched at city/state level, not
-              exact mileage. Trials farther away are kept below under “Farther from you,” never dropped.
-            </>
-          ) : (
-            <>
-              ◎ No distance limit applied — showing trials anywhere. Set a travel range and location in preferences to filter by distance.
-            </>
-          )}
-        </div>
-
-        {/* Clickable status buckets — canonical counts that always reconcile to the pool total. */}
-        <div className="counts">
-          {COUNT_BUCKETS.map((b) => (
-            <button
-              key={b.key}
-              className={`count ${b.cls} ${statusFilter === b.key ? "on" : ""}`}
-              aria-pressed={statusFilter === b.key}
-              onClick={() => onStatusFilter(statusFilter === b.key ? "all" : b.key)}
-            >
-              <b>{bucketCounts[b.key]}</b> {b.label}
-            </button>
-          ))}
-          <span className="count total" title="Every bucket sums to the total screened.">
-            <b>{reconTotal}</b> screened total
-          </span>
-          {statusFilter !== "all" && (
-            <button className="count clear-status" onClick={() => onStatusFilter("all")}>
-              show all ✕
-            </button>
-          )}
-        </div>
-
-        {/* The Fork prompt (intake-prd §6.1) — the differentiator. Only meaningful
-            when the patient is actually open to trials that a next line could close. */}
-        {counts.eligible + counts.uncertain > 0 && (
+        {/* The Fork prompt (intake-prd §6.1) — the differentiator. Only surfaced
+            once the patient has fully matched (at least one Eligible trial); hidden
+            when everything is still "Needs info" or ruled out. */}
+        {counts.eligible > 0 && (
           <button className="fork-prompt" onClick={onOpenFork}>
             <div className="fork-prompt__body">
               <div className="fork-prompt__h">Has your care team recommended what&apos;s next?</div>
@@ -2989,50 +3058,86 @@ const DecisionCard = memo(function DecisionCard({
   const [ledgerOpen, setLedgerOpen] = useState(near);
   const enroll = m.factors.enrollmentWindow;
   const enrollUrgent = near || m.status === "uncertain";
+  // Condensed enrollment chip: lead segment ("Open now") as the label, full
+  // window + note revealed on click. The window string always leads with status.
+  const [enrollOpen, setEnrollOpen] = useState(false);
+  const enrollHead = enroll ? enroll.split(" · ")[0] : "";
 
   return (
     <div id={`trial-${m.nctId}`} className={`dcard ${m.status}${flash ? " flash" : ""}`}>
       <div className="dc-head">
         <div className="dc-title">
-          <a className="nct" href={m.url} target="_blank" rel="noopener noreferrer">
-            {m.nctId} ↗
-          </a>
+          {/* Verdict leads the card — always visible, reinforced by the left status rail. */}
+          <div className={`dc-status ${m.status}`}>
+            <span className="dc-dot" aria-hidden />
+            {label}
+          </div>
           <div className="mt">{m.title}</div>
+          {/* Registry code, phase, design + site demoted to a single mono sub-line. */}
+          <div className="dc-sub">
+            <span>{m.phase}</span>
+            <span className="sep" aria-hidden>
+              ·
+            </span>
+            <span>◎ {m.factors.nearestSite}</span>
+            <span className="sep" aria-hidden>
+              ·
+            </span>
+            <a className="nct" href={m.url} target="_blank" rel="noopener noreferrer">
+              {m.nctId} ↗
+            </a>
+          </div>
         </div>
-        <div className="dc-actions">
-          <span className={`vbadge ${badgeClass(m.status)}`}>{label}</span>
-          <button className={`save ${saved ? "on" : ""}`} onClick={onSave}>
-            {saved ? "★ Saved" : "☆ Save to discuss"}
+        {/* Enrollment window stays top-right — time-sensitive, belongs by the title. */}
+        {enroll && (
+          <button
+            type="button"
+            className={`enroll-chip ${enrollUrgent ? "urgent" : ""}`}
+            onClick={() => setEnrollOpen((o) => !o)}
+            aria-expanded={enrollOpen}
+            title="Enrollment window — click for details"
+          >
+            <span className="enroll-chip__ic" aria-hidden>
+              ◷
+            </span>
+            {enrollHead}
           </button>
-          {canRefer && (
-            <button className="refer-btn" onClick={() => onRefer(m.nctId)}>
-              Prepare referral →
-            </button>
-          )}
-        </div>
+        )}
       </div>
-
-      {reasons.length > 0 && <div className="why">▲ moved up: {reasons.join(" · ")}</div>}
 
       {m.headline && <div className="headline">{m.headline}</div>}
 
+      {/* Full enrollment window + note, revealed from the condensed top-right chip. */}
+      {enroll && enrollOpen && (
+        <div className={`enroll-detail ${enrollUrgent ? "urgent" : ""}`}>
+          <span className="enroll-k">Enrollment</span>
+          <span className="enroll-v">{enroll}</span>
+          {enrollUrgent && <span className="enroll-note">check this window against any “confirm first” steps below</span>}
+        </div>
+      )}
+
+      {reasons.length > 0 && <div className="why">▲ moved up: {reasons.join(" · ")}</div>}
+
       {!near && m.brief && (
         <>
-          <div className="brief">
-            <div className="bcol offer">
-              <div className="bk">Could offer</div>
-              <div className="bv">{m.brief.offers}</div>
+          {/* "Could offer" gets the lead — full width, larger; the two trade-offs step down to a quieter pair. */}
+          <div className="offer">
+            <div className="offer-k">Benefits of the study</div>
+            <div className="offer-v">{m.brief.offers}</div>
+          </div>
+          <div className="tradeoffs">
+            <div className="tcol ask">
+              <div className="tk">Expectations of the study</div>
+              <div className="tv">{m.brief.commitment}</div>
             </div>
-            <div className="bcol ask">
-              <div className="bk">Asks of you</div>
-              <div className="bv">{m.brief.commitment}</div>
-            </div>
-            <div className="bcol unc">
-              <div className="bk">Still uncertain</div>
-              <div className="bv">{m.brief.uncertainty}</div>
+            <div className="tcol unc">
+              <div className="tk">Additional Information</div>
+              <div className="tv">{m.brief.uncertainty}</div>
             </div>
           </div>
-          {m.brief.questionsToAsk.length > 0 && (
+          {/* Only surface these once the patient has actually matched (Eligible) —
+              premature on "Needs info" cards where eligibility isn't established yet. */}
+          {m.status === "eligible" && m.brief.questionsToAsk.length > 0 && (
             <div className="qask">
               <div className="qask-h">Questions to ask your care team</div>
               <ul>
@@ -3045,12 +3150,9 @@ const DecisionCard = memo(function DecisionCard({
         </>
       )}
 
+      {/* Design / commitment signals only — identity (phase · site · NCT) lives in the sub-line above. */}
       <div className="factors">
-        <span className="fchip">{m.phase}</span>
         <span className="fchip">{m.factors.randomized ? "Randomized / placebo possible" : "Open-label"}</span>
-        <span className="fchip" title="Approximate — matched on city/state">
-          ◎ {m.factors.nearestSite}
-        </span>
         {m.factors.locationUnknown && (
           <span className="fchip warn" title="This study lists no site we could place against your location.">
             location not verified
@@ -3059,22 +3161,13 @@ const DecisionCard = memo(function DecisionCard({
         {!m.interventional && <span className="fchip">Observational</span>}
       </div>
 
-      {/* Enrollment window (estimated) — placed next to the required next steps for near-misses. */}
-      {enroll && (
-        <div className={`enroll ${enrollUrgent ? "urgent" : ""}`}>
-          <span className="enroll-k">Enrollment</span>
-          <span className="enroll-v">{enroll}</span>
-          {enrollUrgent && <span className="enroll-note">check this window against any “confirm first” steps below</span>}
-        </div>
-      )}
-
       {m.criteria.length > 0 && (
         <details className="ledger-d" open={near} onToggle={(e) => setLedgerOpen((e.currentTarget as HTMLDetailsElement).open)}>
           <summary>
             <span className="lsum-label">Eligibility reasoning</span>
             <span className="lsum-tally">
               {tally.met > 0 && <span className="t meets">{tally.met} met</span>}
-              {tally.confirm > 0 && <span className="t unc">{tally.confirm} to confirm</span>}
+              {tally.confirm > 0 && <span className="t unc">{tally.confirm} pending</span>}
               {tally.fails > 0 && <span className="t fails">{tally.fails} not met</span>}
             </span>
           </summary>
@@ -3088,16 +3181,19 @@ const DecisionCard = memo(function DecisionCard({
         </details>
       )}
 
-      <div className="meta">
-        <span>{m.sponsor}</span>
-        {m.total > 0 && (
-          <span className="mono">
-            {m.metCount}/{m.total} met
-          </span>
-        )}
-        <a href={m.url} target="_blank" rel="noopener noreferrer">
-          {m.nctId} ↗
-        </a>
+      {/* Actions demoted from the title row to a footer; sponsor sits quietly alongside. */}
+      <div className="dc-foot">
+        <span className="dc-sponsor">{m.sponsor}</span>
+        <div className="dc-actions">
+          <button className={`save ${saved ? "on" : ""}`} onClick={onSave}>
+            {saved ? "★ Saved" : "☆ Save to discuss"}
+          </button>
+          {canRefer && (
+            <button className="refer-btn" onClick={() => onRefer(m.nctId)}>
+              Prepare referral →
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -3107,7 +3203,7 @@ const DecisionCard = memo(function DecisionCard({
 
 type Group = "confirm" | "fails" | "met";
 const GROUP_META: { key: Group; label: string; cls: string }[] = [
-  { key: "confirm", label: "To confirm", cls: "unc" },
+  { key: "confirm", label: "Pending", cls: "unc" },
   { key: "fails", label: "Not met", cls: "fails" },
   { key: "met", label: "Met", cls: "meets" },
 ];
@@ -3132,6 +3228,9 @@ function Ledger({
   onOpenNextSteps: () => void;
 }) {
   const [only, setOnly] = useState<Group | null>(null);
+  // The "Met" group collapses by default (the passing criteria) — it opens on
+  // demand, or automatically when the filter is narrowed to Met only.
+  const [metOpen, setMetOpen] = useState(false);
   // Carry each criterion's ORIGINAL index so a resolve targets the right row even
   // after grouping reorders them.
   const groups: Record<Group, { c: Criterion; idx: number }[]> = { confirm: [], fails: [], met: [] };
@@ -3152,16 +3251,34 @@ function Ledger({
           </button>
         )}
       </div>
-      {shown.map((g) => (
-        <div className="lgroup" key={g.key}>
-          <div className={`lgh ${g.cls}`}>
-            {g.label} · {groups[g.key].length}
+      {shown.map((g) => {
+        const rows = groups[g.key].map(({ c, idx }) => (
+          <LedgerRow key={idx} c={c} index={idx} onResolve={onResolve} onOpenNextSteps={onOpenNextSteps} />
+        ));
+        if (g.key === "met") {
+          return (
+            <details
+              className="lgroup lgroup--met"
+              key={g.key}
+              open={metOpen || only === "met"}
+              onToggle={(e) => setMetOpen((e.currentTarget as HTMLDetailsElement).open)}
+            >
+              <summary className={`lgh ${g.cls}`}>
+                {g.label} · {groups[g.key].length}
+              </summary>
+              {rows}
+            </details>
+          );
+        }
+        return (
+          <div className="lgroup" key={g.key}>
+            <div className={`lgh ${g.cls}`}>
+              {g.label} · {groups[g.key].length}
+            </div>
+            {rows}
           </div>
-          {groups[g.key].map(({ c, idx }) => (
-            <LedgerRow key={idx} c={c} index={idx} onResolve={onResolve} onOpenNextSteps={onOpenNextSteps} />
-          ))}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -3277,9 +3394,6 @@ function verdictRowClass(v: Verdict): string {
 function verdictGlyph(v: Verdict): string {
   return v === "fails" ? "✕" : v === "confirm" ? "?" : "✓";
 }
-function badgeClass(status: TrialMatch["status"]): string {
-  return status === "eligible" ? "eligible" : status === "near" ? "near" : status === "uncertain" ? "uncertain" : "screened";
-}
 
 /* ---- resolving a "confirm": state updates that reconcile with the server ---- */
 
@@ -3334,11 +3448,13 @@ async function runBounded<T>(items: T[], limit: number, fn: (item: T) => Promise
   await Promise.all(workers);
 }
 
-/* ---- "Your next steps": the on-screen handoff for items the patient can't
-   resolve on the spot. Batches every open to-confirm across the reasoned trials,
-   grouped by trial, with the questions to bring to the care team and the nearest
-   site — the honest to-do list a study team ultimately confirms. ---- */
-function NextStepsPanel({ matches, onClose }: { matches: TrialMatch[]; onClose: () => void }) {
+/* ---- "Your next steps": the on-screen handoff for trials the patient is FULLY
+   eligible for (status === "eligible"). These have no open items to confirm by
+   definition (verdict.ts) — the next step is to act: bring the trial to the care
+   team, ask the right questions, and start a referral. Uncertain ("Needs info")
+   trials keep their open questions inline on the card; ruled-out trials are moot.
+   The panel only opens when there is at least one fully-eligible trial. ---- */
+function NextStepsPanel({ matches, onClose, onRefer }: { matches: TrialMatch[]; onClose: () => void; onRefer: (nctId: string) => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -3347,11 +3463,7 @@ function NextStepsPanel({ matches, onClose }: { matches: TrialMatch[]; onClose: 
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const trials = matches
-    .filter((m) => m.status !== "screened")
-    .map((m) => ({ m, confirms: m.criteria.filter((c) => c.verdict === "confirm") }))
-    .filter((t) => t.confirms.length > 0);
-  const totalOpen = trials.reduce((n, t) => n + t.confirms.length, 0);
+  const trials = matches.filter((m) => m.status === "eligible");
 
   return (
     <div className="ns-overlay" role="dialog" aria-modal="true" aria-label="Your next steps" onClick={onClose}>
@@ -3360,9 +3472,11 @@ function NextStepsPanel({ matches, onClose }: { matches: TrialMatch[]; onClose: 
           <div>
             <h2>Your next steps</h2>
             <p className="ns-sub">
-              {totalOpen > 0
-                ? `${totalOpen} open item${totalOpen > 1 ? "s" : ""} to check with your care team. A study team confirms eligibility — this is the list to bring them.`
-                : "You've answered every open item we could re-check."}
+              {trials.length > 0
+                ? `${trials.length} trial${trials.length > 1 ? "s" : ""} you match on record. Bring ${
+                    trials.length > 1 ? "these" : "this"
+                  } to your care team to confirm and start a referral — a study team makes the final eligibility call.`
+                : "No fully-eligible trials yet. Once you match a trial on record, its next steps show up here."}
             </p>
           </div>
           <button className="ns-close" onClick={onClose} aria-label="Close next steps">
@@ -3372,9 +3486,9 @@ function NextStepsPanel({ matches, onClose }: { matches: TrialMatch[]; onClose: 
 
         <div className="ns-body">
           {trials.length === 0 && (
-            <div className="ns-empty">Nothing outstanding right now. Any item we can&apos;t decide from your record will show up here to confirm.</div>
+            <div className="ns-empty">Nothing to act on yet — once you fully match a trial on record, its next steps appear here.</div>
           )}
-          {trials.map(({ m, confirms }) => (
+          {trials.map((m) => (
             <section className="ns-trial" key={m.nctId}>
               <div className="ns-trial-h">
                 <a className="nct" href={m.url} target="_blank" rel="noopener noreferrer">
@@ -3387,18 +3501,7 @@ function NextStepsPanel({ matches, onClose }: { matches: TrialMatch[]; onClose: 
                 {m.factors.enrollmentWindow && <span className="ns-enroll">{m.factors.enrollmentWindow}</span>}
               </div>
 
-              <div className="ns-sec-h unc">To confirm · {confirms.length}</div>
-              <ul className="ns-confirms">
-                {confirms.map((c, i) => (
-                  <li key={i}>
-                    <span className={`ck ${c.kind}`}>{c.kind}</span>
-                    <span className="ns-req">
-                      {c.requirement}
-                      {c.evidence ? <span className="ev">{c.evidence}</span> : null}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <div className="ns-eligible-note">✓ Matches every criterion we could check from your record. A study team confirms final eligibility.</div>
 
               {m.brief && m.brief.questionsToAsk.length > 0 && (
                 <>
@@ -3410,6 +3513,12 @@ function NextStepsPanel({ matches, onClose }: { matches: TrialMatch[]; onClose: 
                   </ul>
                 </>
               )}
+
+              <div className="ns-actions">
+                <button className="refer-btn" onClick={() => onRefer(m.nctId)}>
+                  Prepare referral →
+                </button>
+              </div>
             </section>
           ))}
         </div>

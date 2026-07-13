@@ -9,8 +9,8 @@
    fulvestrant, everolimus+exemestane, chemo, T-DXd.
 
    Two options are ALWAYS appended in code (never from the model):
-   - "Nothing decided yet — show me what each option would cost me" (the visual
-     default: it opens the full decision tree instead of committing to a branch).
+   - "Nothing decided yet — show me which trials each option would rule out" (the
+     visual default: it opens the full decision tree instead of committing to a branch).
    - "Something else" (a single line of free text).
    ========================================================================== */
 
@@ -27,9 +27,9 @@ export const maxDuration = 60;
 export const FORK_FIXED = {
   nothingDecided: {
     id: "nothing-decided",
-    label: "Nothing decided yet — show me what each option would cost me",
+    label: "Nothing decided yet — show me which trials each option would rule out",
     drugClass: "",
-    rationale: "See the full decision tree across every plausible next line.",
+    rationale: "See which of your open trials each plausible next line would close.",
     kind: "all" as const,
   },
   somethingElse: {

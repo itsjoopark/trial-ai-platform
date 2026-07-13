@@ -51,6 +51,7 @@ THEN produce a patient-facing decision brief (the \`brief\` field) to help this 
 - Ground offers / commitment / uncertainty ONLY in the trial facts given to you (phase, purpose, randomization/masking, interventions, nearest site) and your eligibility findings. Never invent efficacy, outcomes, or benefit.
 - Be phase-honest: a Phase 1 study tests safety and dosing and benefit to the patient is unproven; an observational study contributes data and provides no treatment; only later-phase interventional studies test whether a treatment works.
 - Non-directive: NEVER tell the patient which trial to choose, or call any trial "best" or "recommended". You frame the decision; the patient and their care team make it.
+- BE BRIEF. offers / commitment / uncertainty are each 1–2 short sentences (~30 words, hard cap). Lead with the single most important point and stop. Do NOT restate the trial title, re-explain a drug's mechanism at length, or pad with caveats. Concise beats complete — the reader is scanning three columns side by side.
 - questionsToAsk: turn the 'confirm' items and the real uncertainties into 2–3 specific questions this patient should bring to their care team.`;
 
 /* §5.3 — "Who's filling this out?" changes ONLY the addressee/voice of the brief

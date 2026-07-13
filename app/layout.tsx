@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Manrope, Newsreader } from "next/font/google";
+import { AuthProvider } from "./auth-context";
 import "./globals.css";
 
 // Trial design system (design.md §4). Manrope is the app-wide sans; loaded as a
@@ -30,7 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // Light is the default theme; the in-app toggle stamps data-theme on <html>.
   return (
     <html lang="en" data-theme="light" className={`${manrope.variable} ${newsreader.variable}`}>
-      <body>{children}</body>
+      <body>
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }
