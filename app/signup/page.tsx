@@ -9,7 +9,7 @@ import { useAuth, type Portal } from "@/app/auth-context";
 const ROLES: [Portal, string][] = [
   ["patient", "Patient"],
   ["clinician", "Clinician"],
-  ["partner", "Business Partner"],
+  ["partner", "Partners"],
 ];
 
 function isPortal(v: string | null): v is Portal {
@@ -44,9 +44,9 @@ function SignupForm() {
 
   return (
     <div className="auth-card">
-      <Link href="/" className="auth-brand" aria-label="Trial home">
+      <Link href="/" className="auth-brand" aria-label="Trialign home">
         <TrialLogo />
-        <span>Trial</span>
+        <span>Trialign</span>
       </Link>
       <h1>Create your account</h1>
       <p className="auth-sub">Save searches and pick up where you left off.</p>

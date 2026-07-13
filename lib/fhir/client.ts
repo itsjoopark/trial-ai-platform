@@ -1,5 +1,5 @@
 /* ============================================================================
-   Trial — SMART on FHIR R4 sandbox client
+   Trialign — SMART on FHIR R4 sandbox client
 
    The record-import moat (record-import-prd.md): the patient pulls their own
    chart through the Cures Act (g)(10) FHIR API, and Claude turns the documents

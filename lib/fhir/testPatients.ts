@@ -1,5 +1,5 @@
 /* ============================================================================
-   Trial — bundled mCODE R4 oncology test patients
+   Trialign — bundled mCODE R4 oncology test patients
 
    The public SMART open sandbox has real FHIR mechanics but no DocumentReferences
    and no oncology data, so it can't demonstrate the moat on its own (§5). These

@@ -1,5 +1,5 @@
 /* ============================================================================
-   Trial — shared domain types
+   Trialign — shared domain types
 
    These describe the data that flows between the server route handlers and the
    React UI. The Zod schemas in schemas.ts describe what Claude is asked to

@@ -1,8 +1,8 @@
 /* ============================================================================
-   Trial — frontend styles
+   Trialign — frontend styles
 
    Light is the DEFAULT theme; [data-theme="dark"] is the opt-in dark world.
-   Identity (Trial design system — see /design.md): warm-neutral canvas ·
+   Identity (Trialign design system — see /design.md): warm-neutral canvas ·
    a single teal→blue gradient accent story · monospace carries all clinical
    data · the verdict triad (eligible / near / uncertain) is green / amber / red
    and never the accent. Style everything through the tokens below — don't
@@ -190,6 +190,12 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 .paste .paste-err{margin:8px 0 0;font-size:12.5px;color:var(--near);line-height:1.4;}
 .paste .row .hint{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
 .paste .row .sp{flex:1;}
+/* Intake: scope questions and the note composer share ONE panel — scope is answered
+   first, a hairline divider, then the composer sits as a sunken well inside the card. */
+.intake-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:flex;flex-direction:column;gap:16px;}
+.intake-scope{display:flex;flex-direction:column;gap:15px;}
+.intake-scope .chiprow__q{margin-top:0;}
+.intake-card__sep{height:1px;background:var(--line-soft);}
 /* buttons — design.md §6. Secondary = transparent + 1px ink border; primary
    (.go) = the brand gradient, one per view (the app uses one .btn.go per view). */
 .btn{font:inherit;font-weight:560;cursor:pointer;border-radius:var(--radius-btn);border:1px solid var(--ink);background:transparent;color:var(--ink);padding:9px 15px;display:inline-flex;align-items:center;gap:8px;}
@@ -241,16 +247,63 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 @media(max-width:900px){.product-carousel{--per-view:1;}}
 @media (prefers-reduced-motion:reduce){.product-carousel__track{transition:none;}}
 
+
+/* Portal-mode crossfade — when the Patient/Clinician/Partners tab changes, the
+   mode-dependent content re-mounts (key={mode}) and softly fades up. Occasional
+   interaction → standard enter motion: ease-out, transform+opacity only, ~280ms.
+   Reduced-motion is handled globally (movement drops to a near-instant fade). */
+@keyframes homeModeIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+.home-mode-fade{animation:homeModeIn 280ms var(--ease-out) both;}
+
+/* patient problem stat under the headline (§4.2) — smaller, muted subhead style */
+.home-problem{margin:0 0 14px;max-width:56ch;font-size:14px;line-height:1.55;color:var(--ink-3);text-wrap:pretty;}
+/* sponsor subhead second paragraph (§6.3) */
+.home-lede--follow{margin-top:12px;}
+.home-lede--follow b{color:var(--ink);font-weight:600;}
+/* sponsor problem stat below the cards (§6.4) — centered, muted */
+.home-stat{margin:22px auto 0;max-width:60ch;text-align:center;font-size:14px;line-height:1.6;color:var(--ink-3);text-wrap:pretty;}
+
+/* §3 — "What your next treatment closes": copy left, mono mock right, stacks on
+   mobile. Built from existing surface/line/mono tokens; ✓/✗ use the verdict hues. */
+.closing{position:relative;isolation:isolate;overflow:hidden;padding:28px 22px 8px;}
+.closing__inner{position:relative;z-index:1;max-width:960px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:center;}
+@media(max-width:760px){.closing__inner{grid-template-columns:1fr;gap:20px;}}
+.closing__h{margin:10px 0 12px;font-size:clamp(22px,2.4vw,28px);font-weight:600;letter-spacing:-.01em;line-height:1.2;text-wrap:balance;}
+.closing__body{margin:0 0 10px;max-width:52ch;font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty;}
+.closing__body--strong{color:var(--ink);font-weight:600;}
+.closing__mock{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:22px 24px;font-size:13px;line-height:1.7;color:var(--ink-2);overflow-x:auto;box-shadow:0 1px 2px color-mix(in srgb,var(--ink) 5%,transparent);}
+/* scenario framing line — amber (the --uncertain pair), signalling "what if". */
+.closing__mock-head{margin-bottom:20px;font-size:12.5px;font-weight:600;color:var(--uncertain);text-transform:uppercase;letter-spacing:.04em;}
+.closing__cols{display:grid;grid-template-columns:1fr 1fr;gap:16px 24px;}
+@media(max-width:440px){.closing__cols{grid-template-columns:1fr;}}
+/* column headers carry the verdict hue: open = meets/green, closes = fails/red. */
+.closing__col-h{font-size:12.5px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em;}
+.closing__col--open .closing__col-h{color:var(--eligible);}
+.closing__col--closed .closing__col-h{color:var(--near);}
+.closing__rule{height:1px;background:var(--line);margin:9px 0 14px;}
+/* wrap lets the exclusion reason drop onto its own muted line below the id + mark.
+   Subtle inset fill on hover as you scan the NCT ids — negative x-margin lets the
+   fill bleed past the text without nudging the layout. Theme-aware via --surface-2. */
+.closing__row{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;margin:0 -10px 4px;padding:5px 10px;border-radius:8px;transition:background-color var(--t-hover) var(--ease);}
+.closing__row:hover{background:var(--surface-2);}
+.closing__nct{color:var(--ink);}
+.closing__ok{color:var(--eligible);font-weight:700;}
+.closing__no{color:var(--near);font-weight:700;}
+.closing__reason{flex-basis:100%;color:var(--ink-3);font-size:12.5px;margin-top:2px;}
+
+
 /* site footer */
 .site-footer{flex:none;margin-top:auto;border-top:1px solid var(--line);background:color-mix(in srgb,var(--surface) 82%,transparent);backdrop-filter:blur(8px);}
 .site-footer__inner{max-width:960px;margin:0 auto;padding:22px 22px 18px;}
 .site-footer__brand{display:flex;flex-direction:column;gap:4px;margin:0 0 16px;}
-.site-footer__brand strong{font-size:14px;}
-.site-footer__brand span{font-size:13px;color:var(--ink-2);}
+.site-footer__brand strong{font-size:13px;}
+.site-footer__brand span{font-size:11.5px;color:var(--ink-2);}
 .site-footer__cols{display:grid;grid-template-columns:repeat(3,1fr);gap:16px 24px;margin:0 0 14px;}
-.site-footer__cols h3{margin:0 0 6px;font-size:12px;font-weight:650;letter-spacing:.02em;}
-.site-footer__cols p{margin:0;font-size:12px;line-height:1.55;color:var(--ink-2);}
-.site-footer__legal{margin:0;padding-top:12px;border-top:1px solid var(--line-soft);font-size:11.5px;line-height:1.5;color:var(--ink-3);}
+.site-footer__cols h3{margin:0 0 6px;font-size:11px;font-weight:650;letter-spacing:.02em;}
+.site-footer__cols p{margin:0;font-size:11px;line-height:1.5;color:var(--ink-2);}
+/* Bottom row: copyright left, small appearance toggle right. */
+.site-footer__bottom{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--line-soft);}
+.site-footer__legal{flex:1;min-width:240px;margin:0;font-size:10.5px;line-height:1.5;color:var(--ink-3);}
 @media(max-width:760px){.site-footer__cols{grid-template-columns:1fr;gap:12px;}}
 
 /* capture: live extraction readout */
@@ -706,6 +759,28 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 .sb-demo{align-self:flex-start;}
 @media(max-width:720px){.demo-badge{display:none;}.sb-demo{display:block;}}
 
+/* Audit D7 — blocking demo interstitial. Follows the .ns-overlay/.ns-panel
+   conventions (surface + line + tokened radius), centered; non-dismissibility is
+   enforced in JS (no backdrop-close, no Escape, no ✕). Sits above every other
+   overlay (.ns-overlay is z-index 60). */
+.gate-overlay{position:fixed;inset:0;z-index:80;background:color-mix(in srgb,var(--ink) 44%,transparent);backdrop-filter:blur(3px);display:flex;justify-content:center;align-items:center;padding:5vh 16px;overflow-y:auto;animation:reveal .18s var(--ease);}
+.gate-panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 24px 60px rgba(28,27,26,.30);width:100%;max-width:460px;display:flex;flex-direction:column;max-height:90vh;overflow-y:auto;}
+.gate-head{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:20px 22px 12px;}
+/* Keep the demo badge visible inside the modal at every width (the app-wide
+   @media rule hides bare .demo-badge on mobile; this more-specific rule wins). */
+.gate-head .demo-badge{display:inline-block;}
+.gate-head h2{font-size:19px;font-weight:680;letter-spacing:-.01em;margin:0;line-height:1.2;}
+.gate-body{padding:2px 22px 4px;}
+.gate-body p{font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0;max-width:56ch;}
+.gate-body p b{color:var(--ink);}
+.gate-consent{margin:14px 0 2px;cursor:pointer;}
+.gate-actions{display:flex;flex-direction:column;gap:9px;padding:14px 22px 22px;}
+/* Primary (sample) leads and spans full width; the ghost continue is quieter and
+   sits below — the sample path stays at least as prominent (Audit D7). */
+.gate-actions .btn.go{width:100%;justify-content:center;}
+.gate-continue{width:100%;justify-content:center;text-align:center;padding:9px 15px;font-size:13px;}
+.gate-continue:disabled{opacity:.5;cursor:default;border-color:var(--line);color:var(--ink-3);}
+
 /* ============================================================================
    Feedback-driven additions (Trial_Feedback_PRD)
    ========================================================================== */
@@ -833,6 +908,9 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 .prov-legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:12px 0 0;padding:9px 12px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:var(--r-sm);}
 .prov-legend__h{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);}
 .prov-legend__item{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);}
+/* Schema-conformance line folded into the Sources panel (full-width row on top). */
+.prov-legend__schema{flex-basis:100%;display:flex;align-items:baseline;gap:9px;font-size:12px;line-height:1.5;color:var(--ink-2);padding-bottom:9px;margin-bottom:2px;border-bottom:1px solid var(--line-soft);}
+.prov-legend__chip{flex:none;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.05em;color:var(--agent);background:color-mix(in srgb,var(--agent) 14%,transparent);border-radius:5px;padding:3px 7px;white-space:nowrap;}
 
 /* ---- mCODE re-key: per-field profile label + conformance banner ---- */
 .frow .k .mcode,.prow .k .mcode{display:block;margin-top:3px;font-family:var(--mono);font-size:9.5px;letter-spacing:0;text-transform:none;color:var(--ink-3);opacity:.9;}
@@ -1065,6 +1143,8 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
    ========================================================================== */
 .refer{max-width:820px;}
 .refer-head{display:flex;flex-direction:column;gap:12px;margin-bottom:14px;}
+/* Back button sizes to its content and stays top-left (don't stretch full-width). */
+.refer-head>.ghost{align-self:flex-start;}
 .refer-title .nct{font-family:var(--mono);font-size:12px;color:var(--agent);}
 .refer-title h2{font-size:19px;font-weight:640;letter-spacing:-.02em;margin:4px 0 5px;line-height:1.25;}
 .refer-sub{font-size:12.5px;color:var(--ink-3);}
@@ -1141,6 +1221,9 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 /* §5 packets */
 .packet{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);margin-bottom:16px;overflow:hidden;}
 .packet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 15px;background:var(--surface-2);border-bottom:1px solid var(--line-soft);}
+/* Compact secondary Print action — smaller than a primary .btn, quiet border. */
+.packet-print{font-size:12px;font-weight:560;padding:5px 12px;border-radius:var(--r-sm);border-color:var(--line);color:var(--ink-2);}
+.packet-print:hover{border-color:var(--ink-3);color:var(--ink);}
 .packet-kicker{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--agent);}
 .packet-body{padding:15px 16px;}
 .packet-body h3{font-size:15px;font-weight:640;margin:0 0 5px;line-height:1.3;}
@@ -1186,7 +1269,7 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 /* print: one packet only, chrome hidden */
 @media print{
   .sidebar,.refer-nav,.refer-head,.site-footer,.ascii-bg,.refer-disclaimer,.auth-done{display:none !important;}
-  body.printing-a .refer-sec,body.printing-a .packet-b,body.printing-b .refer-sec,body.printing-b .packet-a{display:none !important;}
+  body.printing-a .refer-sec,body.printing-a .packet-b,body.printing-a .packet-contacts,body.printing-b .refer-sec,body.printing-b .packet-a,body.printing-b .packet-contacts{display:none !important;}
   body.printing-a #refer-packets,body.printing-b #refer-packets{display:block !important;}
   .packet{border:none;}
   .packet-head button{display:none;}
@@ -1237,9 +1320,9 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 /* --- footer: relocated theme control --- */
 .site-footer__top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 16px;}
 .site-footer__top .site-footer__brand{margin:0;}
-.site-footer__prefs{display:flex;align-items:center;gap:10px;flex:none;}
-.site-footer__prefs-label{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);}
-.footer-theme{font:inherit;font-size:12.5px;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 12px;cursor:pointer;}
+.site-footer__prefs{display:flex;align-items:center;gap:8px;flex:none;}
+.site-footer__prefs-label{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);}
+.footer-theme{font:inherit;font-size:11px;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:3px 9px;cursor:pointer;}
 .footer-theme:hover{border-color:var(--ink-3);color:var(--ink);}
 
 /* --- /login + /signup pages --- */
@@ -1266,3 +1349,48 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 .auth-demo-note{font-size:11.5px;color:var(--ink-3);line-height:1.5;text-align:center;margin:12px 0 0;}
 .auth-back{display:inline-block;margin-top:14px;font-size:12.5px;color:var(--ink-3);text-decoration:none;}
 .auth-back:hover{color:var(--ink-2);text-decoration:none;}
+
+/* ============================================================================
+   Interface Craft microinteractions
+   (1) stepping-stone loader — the logo's five dots, the brand's motion identity
+       (trial-craft-motion §4): fade-up 60ms apart, looping.
+   (2) results "match-found" reveal — a CSS-driven storyboard: counts settle,
+       then result cards stagger up. Honors the motion tokens (≤~340ms,
+       --ease-out, no bounce); prefers-reduced-motion collapses movement to fade.
+   ========================================================================== */
+
+/* (1) stepping-stone loader */
+.stones{display:inline-flex;align-items:flex-end;gap:5px;height:12px;line-height:0;}
+.stones i{width:6px;height:6px;border-radius:50%;background:var(--blue);opacity:.22;animation:stonePop 1.4s var(--ease-out) infinite;}
+.stones i:nth-child(2){animation-delay:60ms;}
+.stones i:nth-child(3){animation-delay:120ms;}
+@keyframes stonePop{0%,72%,100%{opacity:.22;transform:translateY(0);}36%{opacity:1;transform:translateY(-4px);}}
+
+/* (2) results reveal — counts + summary settle in, then the eligible number lands */
+.board--results .board-sub,.board--results .counts{opacity:0;transform:translateY(6px);transition:opacity .3s var(--ease-out),transform .3s var(--ease-out);}
+.board--results:not([data-reveal="0"]) .board-sub,.board--results:not([data-reveal="0"]) .counts{opacity:1;transform:none;}
+.board--results:not([data-reveal="0"]) .count.eligible b{animation:countLand .42s var(--ease-out);}
+@keyframes countLand{from{transform:scale(1.18);}to{transform:scale(1);}}
+/* result cards stagger up (delay = card index × --card-stagger) */
+.dcard[data-rev]{transition:opacity .34s var(--ease-out),transform .34s var(--ease-out);transition-delay:calc(var(--rev-i,0) * var(--card-stagger,70ms));}
+.dcard[data-rev="out"]{opacity:0;transform:translateY(10px);}
+.dcard[data-rev="in"]{opacity:1;transform:none;}
+
+/* ============================================================================
+   Quick-check (Review) layout audit — group the flat mCODE record into human
+   sections, demote the per-row schema key to a tooltip, collapse the mCODE
+   banner to one line, and keep the "correct anything" edit affordance visible.
+   ========================================================================== */
+.pgroup{margin:0 0 16px;}
+.pgroup-h{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);margin:0 0 6px 2px;}
+/* mCODE conformance banner — collapsed to one line, expandable */
+details.mcode-banner{display:block;padding:0;}
+details.mcode-banner>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:10px 13px;}
+details.mcode-banner>summary::-webkit-details-marker{display:none;}
+details.mcode-banner>summary::after{content:"▸";margin-left:auto;color:var(--ink-3);font-size:10px;transition:transform .18s var(--ease);}
+details.mcode-banner[open]>summary::after{transform:rotate(90deg);}
+.mcode-banner__one{font-size:12.5px;color:var(--ink-2);}
+details.mcode-banner .mcode-banner__txt{padding:0 13px 11px;margin:0;}
+/* edit affordance faintly visible at rest (the page asks you to correct anything) */
+.prow .edit{opacity:.5;}
+.prow:hover .edit,.prow.editing .edit{opacity:1;}

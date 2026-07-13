@@ -3,7 +3,7 @@ import { Manrope, Newsreader } from "next/font/google";
 import { AuthProvider } from "./auth-context";
 import "./globals.css";
 
-// Trial design system (design.md §4). Manrope is the app-wide sans; loaded as a
+// Trialign design system (design.md §4). Manrope is the app-wide sans; loaded as a
 // variable font so the app's in-between weights (560/640/680) render true.
 const manrope = Manrope({
   subsets: ["latin"],
@@ -19,7 +19,7 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "Trial — demo clinical trial matcher",
+  title: "Trialign — transparent clinical trial matching",
   description:
     "Research prototype. Describe your situation and see recruiting ClinicalTrials.gov studies you may be eligible for, with the reasoning behind every match. Not medical advice; synthetic data only.",
   icons: { icon: "/images/trial-logo.png", apple: "/images/trial-logo.png" },

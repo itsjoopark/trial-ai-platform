@@ -35,7 +35,7 @@ const CANDIDATE_POOL = 30; // structural candidates fetched from the registry
 const DEEP_REASON_COUNT = 10; // trials we run full Claude reasoning over
 const CONCURRENCY = 5; // simultaneous per-trial Claude calls
 
-const SYSTEM = `You are the coordinating agent for Trial, screening one patient against one clinical trial's eligibility criteria.
+const SYSTEM = `You are the coordinating agent for Trialign, screening one patient against one clinical trial's eligibility criteria.
 
 You are given a structured patient profile and the verbatim inclusion/exclusion text from ClinicalTrials.gov. Segment that text into atomic criteria and judge each against the profile.
 

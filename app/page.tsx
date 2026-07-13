@@ -1,7 +1,7 @@
 "use client";
 
 /* ============================================================================
-   Trial — patient-first client state machine
+   Trialign — patient-first client state machine
 
    Portal home + landing are the front door (top header + portal tabs). Once the
    patient enters the flow, the app switches to a Claude-desktop-style workspace
@@ -48,6 +48,11 @@ type MatchResponse = { conditionQuery: string; summary: string; counts: Counts; 
 type PortalMode = "patient" | "clinician" | "partner";
 type Phase = "home" | "landing" | "connect" | "capture" | "clarify" | "confirm" | "reason" | "results" | "fork" | "refer";
 
+/* Audit D7 — the demo interstitial's pending action. A data-ingestion attempt
+   (note submit, PDF pick, or entering the Connect flow) is stashed here while the
+   blocking DemoGate is shown, then replayed verbatim once the user acknowledges. */
+type GateAction = { kind: "note" } | { kind: "pdf"; file: File } | { kind: "connect" };
+
 /* ---- record-import (SMART on FHIR) shapes ---- */
 type ConnectPatient = { id: string; label: string; summary: string };
 type ConnectList = { base: string; live: ConnectPatient[]; liveError: string | null; bundled: ConnectPatient[] };
@@ -71,9 +76,9 @@ const SHELL_PHASES: Phase[] = ["capture", "clarify", "confirm", "reason", "resul
 const PORTAL_MODES: [PortalMode, string][] = [
   ["patient", "Patient"],
   ["clinician", "Clinician"],
-  ["partner", "Business Partner"],
+  ["partner", "Partners"],
 ];
-const MODE_BADGE: Record<PortalMode, string> = { patient: "patient", clinician: "clinician", partner: "partner" };
+const MODE_BADGE: Record<PortalMode, string> = { patient: "patient", clinician: "clinician", partner: "partners" };
 
 /* ---- scope: travel band + location (relocated into the Capture chip row) ---- */
 type TravelPref = "local" | "regional" | "any";
@@ -178,9 +183,18 @@ function SourceBadge({ source }: { source: BadgeSource }) {
     </span>
   );
 }
-function ProvenanceLegend() {
+function ProvenanceLegend({ schema = false }: { schema?: boolean }) {
   return (
     <div className="prov-legend" aria-label="How to read the source labels">
+      {schema && (
+        <div className="prov-legend__schema">
+          <span className="prov-legend__chip">mCODE / USCDI+ CTM</span>
+          <span>
+            Mapped to the federal Cancer Clinical Trials Matching schema (<b>mCODE 4.0.0 / US Core 6.1.0</b>). Every field is labeled with its
+            source below.
+          </span>
+        </div>
+      )}
       <span className="prov-legend__h">Sources</span>
       {(["fhir", "note", "you"] as FieldSource[]).map((s) => (
         <span key={s} className="prov-legend__item">
@@ -234,6 +248,13 @@ export default function Page() {
   // true only when the "Try a sample patient (Margaret)" chip was used — routes
   // /api/match to the deterministic demo result (lib/demoMatch).
   const [demoSample, setDemoSample] = useState(false);
+  // Audit D7 — blocking demo interstitial. `demoAcked` is per-session React state
+  // ONLY (never persisted → a refresh re-arms the gate); `gate` holds the pending
+  // ingestion action while the modal is up. A mirror ref lets the resume path read
+  // the acknowledgment synchronously, before React commits the state update.
+  const [demoAcked, setDemoAcked] = useState(false);
+  const demoAckedRef = useRef(false);
+  const [gate, setGate] = useState<GateAction | null>(null);
 
   const appRef = useRef<HTMLDivElement>(null);
 
@@ -255,6 +276,13 @@ export default function Page() {
       /* ignore */
     }
   }, [theme]);
+
+  // Keep the synchronous mirror in step with the acknowledgment state. The resume
+  // path also sets the ref directly (so a same-tick replay clears its gate check);
+  // this effect is the durable source-of-truth sync for every other render.
+  useEffect(() => {
+    demoAckedRef.current = demoAcked;
+  }, [demoAcked]);
 
   /* ---- transitions ---- */
 
@@ -297,6 +325,13 @@ export default function Page() {
   async function readNote(text: string, demo = false) {
     const t = text.trim();
     if (!t) return;
+    // Audit D7 — choke point: no /api/extract call may fire before the gate is
+    // acknowledged. The sample path (demo === true) is synthetic by construction
+    // and is the safe exit we steer to, so it bypasses.
+    if (!demo && !demoAckedRef.current) {
+      setGate({ kind: "note" });
+      return;
+    }
     resetIntake();
     setDemoSample(demo);
     setNote(t);
@@ -314,6 +349,11 @@ export default function Page() {
   // Upload PDF path — wire the previously-orphaned /api/upload-pdf route: extract
   // text server-side, then run the same extraction as a note.
   async function readPdf(file: File) {
+    // Audit D7 — choke point: stash the File and gate before /api/upload-pdf.
+    if (!demoAckedRef.current) {
+      setGate({ kind: "pdf", file });
+      return;
+    }
     resetIntake();
     setSourceLabel(file.name);
     setPhase("capture");
@@ -603,13 +643,44 @@ export default function Page() {
     if (portalMode === "patient") setPhase("landing");
   }
 
+  /* ---- Audit D7 — demo gate ---- */
+  // Entering the Connect flow is itself an ingestion path (the sandbox listing
+  // fetch fires on mount), so gate the navigation, not just readRecords.
+  function enterConnect() {
+    if (!demoAckedRef.current) {
+      setGate({ kind: "connect" });
+      return;
+    }
+    setPhase("connect");
+  }
+  // "Continue with a synthetic note": acknowledge, close, and replay the stashed
+  // action. The ref flips synchronously so the replayed handler clears its gate
+  // check in this same tick (React's demoAcked commit lags a render behind).
+  function ackAndResume() {
+    const pending = gate;
+    demoAckedRef.current = true;
+    setDemoAcked(true);
+    setGate(null);
+    if (!pending) return;
+    if (pending.kind === "note") void readNote(note);
+    else if (pending.kind === "pdf") void readPdf(pending.file);
+    else setPhase("connect");
+  }
+  // "Use the sample patient (Margaret)": discard the stashed action and run the
+  // sample flow. Deliberately does NOT set demoAcked — using the sample doesn't
+  // license real-note entry, so the gate re-arms if they then try their own note.
+  function gateSample() {
+    setGate(null);
+    void readNote(SAMPLE_NOTE, true);
+  }
+
   /* ---- top header (home + landing only) ---- */
   const header = (
     <div className="top">
       <div className="top-left">
         <button type="button" className="brand brand-btn" onClick={goHome}>
           <TrialLogo />
-          Trial <small>{MODE_BADGE[portalMode]}</small>
+          Trialign <small>{MODE_BADGE[portalMode]}</small>
         </button>
       </div>
       <div className="mode-switch" role="tablist" aria-label="Portal mode">
@@ -761,7 +832,7 @@ export default function Page() {
                 onRead={readNote}
                 onSample={() => readNote(SAMPLE_NOTE, true)}
                 onPdf={readPdf}
-                onConnect={() => setPhase("connect")}
+                onConnect={enterConnect}
                 studyTypes={studyTypes}
                 onToggleStudyType={toggleStudyType}
                 survey={survey}
@@ -777,6 +848,52 @@ export default function Page() {
           </div>
         </>
       )}
+
+      {/* Audit D7 — blocking demo interstitial. Shown the moment an ingestion path
+          is attempted before acknowledgment; the only exits are its two buttons. */}
+      {gate && <DemoGate onSample={gateSample} onContinue={ackAndResume} />}
+    </div>
+  );
+}
+
+/* ============================ demo gate (Audit D7) ======================== */
+
+/* Blocking interstitial enforced at the data-flow choke point: it is the first
+   thing any real note / PDF / record-connect attempt hits, so no health data
+   reaches /api/extract before this consent moment. Deliberately NOT dismissible
+   — no backdrop-click, no Escape, no ✕. The only ways out are its two buttons,
+   and the primary steers to the safe synthetic sample. */
+function DemoGate({ onSample, onContinue }: { onSample: () => void; onContinue: () => void }) {
+  const [agreed, setAgreed] = useState(false);
+  return (
+    <div className="gate-overlay" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+      <div className="gate-panel">
+        <div className="gate-head">
+          <div className="demo-badge">DEMO · SYNTHETIC DATA ONLY</div>
+          <h2 id="gate-title">This is a demo — synthetic data only</h2>
+        </div>
+        <div className="gate-body">
+          <p>
+            This build is for demonstration. <b>Please do not enter real patient information.</b> Anything you enter is processed by an AI service
+            to generate trial matches, and is not stored by Trial.
+          </p>
+          <label className="consent gate-consent">
+            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+            <span>
+              I understand, and I will not enter real patient information. I agree to the information I enter being processed to find matching
+              trials.
+            </span>
+          </label>
+        </div>
+        <div className="gate-actions">
+          <button type="button" className="btn go" onClick={onSample}>
+            Use the sample patient (Margaret)
+          </button>
+          <button type="button" className="ghost gate-continue" disabled={!agreed} onClick={onContinue}>
+            Continue with a synthetic note
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -851,7 +968,7 @@ function Sidebar({
     <aside className="sidebar">
       <button type="button" className="sb-brand" onClick={onHome}>
         <TrialLogo />
-        Trial <small>patient</small>
+        Trialign <small>patient</small>
       </button>
 
       <div className="demo-badge sb-demo">DEMO · SYNTHETIC DATA ONLY</div>
@@ -971,6 +1088,139 @@ function Sidebar({
 
 /* ============================ phase views ================================= */
 
+/* Per-tab product cards (website-content-prd §4.4 / §5.4 / §6.5). Same card
+   component + carousel — only the copy differs by portal mode. The closing-window
+   card is intentionally first on every tab (§7.3). */
+type ProductSlide = { title: string; paras: string[] };
+const PRODUCT_CARDS: Record<PortalMode, ProductSlide[]> = {
+  patient: [
+    {
+      title: "See what closes",
+      paras: [
+        "Trial options aren't static. Starting your next line of therapy can permanently exclude you from trials no one flagged.",
+        "Trialign shows which trials stay open and which close — before you decide, not after.",
+      ],
+    },
+    {
+      title: "Every criterion, with its reasoning",
+      paras: [
+        "No black-box match score. Each inclusion and exclusion criterion is judged against your record — met, not met, needs confirmation, or unknown.",
+        "Uncertain calls are flagged, never guessed.",
+      ],
+    },
+    {
+      title: "Know what to bring before you call",
+      paras: [
+        "Expired scans and missing tissue blocks are among the top reasons patients fail screening.",
+        "Trialign tells you what to go get — and hands you a one-pager for your oncologist.",
+      ],
+    },
+  ],
+  clinician: [
+    {
+      title: "See what a treatment decision closes",
+      paras: [
+        "Starting the next line can permanently exclude a patient from trials nobody flagged — and outside the trials you personally run, there is no mechanism to catch it.",
+        "Trialign shows which studies close, and when, at the moment you're deciding.",
+      ],
+    },
+    {
+      title: "Auditable, not oracular",
+      paras: [
+        "Every call cites the criterion text it came from. Near-misses list every failing criterion rather than dropping the patient silently.",
+        "Uncertain calls are surfaced as uncertain. We never guess a criterion we can't support.",
+      ],
+    },
+    {
+      title: "Pre-screens that don't start from zero",
+      paras: [
+        "Patients arrive with a structured mCODE profile, per-criterion status, and their readiness gaps already surfaced — expired imaging, missing archival tissue, stale labs.",
+        "Coordinator time goes to real candidates.",
+      ],
+    },
+  ],
+  partner: [
+    {
+      title: "We intercept your biggest leak",
+      paras: [
+        "The patients you lose to off-protocol therapy are lost before they ever contact you.",
+        "Trialign shows them what their next treatment closes — while the decision is still open.",
+      ],
+    },
+    {
+      title: "Pre-screened, not pre-qualified",
+      paras: [
+        "Every criterion in your protocol, judged against a structured mCODE profile. Uncertain calls flagged rather than guessed.",
+        "Coordinators start at 80%, not zero.",
+      ],
+    },
+    {
+      title: "Readiness handled up front",
+      paras: [
+        "Missing archival tissue and expired imaging drive a large share of screen failures.",
+        "We surface them to the patient before they call — ordered by lead time.",
+      ],
+    },
+  ],
+};
+
+/* §3 closing-window mock — verbatim NCT ids/reasons, rendered in the site's mono
+   style with the verdict palette (✓ eligible / ✗ near). */
+const CLOSING_OPEN = ["NCT06412831", "NCT06390247", "NCT06255190", "NCT06188402"];
+const CLOSING_CLOSED: [string, string][] = [
+  ["NCT06301175", "no prior AKT inhibitor"],
+  ["NCT06274558", "no prior PI3K/AKT/mTOR"],
+  ["NCT06149023", "≤2 prior lines of therapy"],
+];
+
+/* §3 — "What your next treatment closes" (Patient tab only), between hero and
+   product cards. Two columns; copy left, mono mock right, stacks on mobile. */
+function ClosingWindow() {
+  const bgRef = useRef<HTMLElement>(null);
+  return (
+    <section ref={bgRef} className="closing" aria-label="What your next treatment closes">
+      <AsciiBackground trackRef={bgRef} variant="subtle" className="ascii-bg ascii-bg--panel" />
+      <div className="closing__inner">
+        <div className="closing__copy">
+          <p className="home-kicker">What your next treatment closes</p>
+          <h2 className="closing__h">Eligibility is not a snapshot. It&apos;s a window that closes.</h2>
+          <p className="closing__body">
+            Many trials permanently exclude patients who&apos;ve already started certain therapies. After showing your matches, Trialign asks
+            what your care team has recommended next — and shows exactly which trials stay open and which close if you start it.
+          </p>
+          <p className="closing__body closing__body--strong">Before you decide, not after.</p>
+        </div>
+        <div className="closing__mock mono">
+          <div className="closing__mock-head">IF YOU START CAPIVASERTIB NEXT MONTH:</div>
+          <div className="closing__cols">
+            <div className="closing__col closing__col--open">
+              <div className="closing__col-h">STAYS OPEN ({CLOSING_OPEN.length})</div>
+              <div className="closing__rule" aria-hidden />
+              {CLOSING_OPEN.map((id) => (
+                <div key={id} className="closing__row">
+                  <span className="closing__nct">{id}</span>
+                  <span className="closing__ok" aria-label="stays open">✓</span>
+                </div>
+              ))}
+            </div>
+            <div className="closing__col closing__col--closed">
+              <div className="closing__col-h">CLOSES ({CLOSING_CLOSED.length})</div>
+              <div className="closing__rule" aria-hidden />
+              {CLOSING_CLOSED.map(([id, reason]) => (
+                <div key={id} className="closing__row">
+                  <span className="closing__nct">{id}</span>
+                  <span className="closing__no" aria-label="closes">✗</span>
+                  <span className="closing__reason">{reason}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Home({
   mode,
   onEnter,
@@ -984,20 +1234,20 @@ function Home({
   const copy = {
     patient: {
       kicker: "Patient portal",
-      title: "See which clinical trials you may qualify for and why.",
-      lede: "Describe your situation, upload a note, or connect your medical records (SMART on FHIR). Trial structures it, screens live against recruiting studies on ClinicalTrials.gov, and shows the inclusion and exclusion reasoning for every match.",
+      title: "See which trials you qualify for — and which ones close if you start treatment.",
+      lede: "Describe your situation, upload a note, or connect your medical records (SMART on FHIR). Trialign structures it, screens live against recruiting studies on ClinicalTrials.gov, and shows the inclusion and exclusion reasoning for every match — including which trials your next treatment would take off the table.",
       cta: "Enter patient portal →",
     },
     clinician: {
       kicker: "Clinician & CRC portal",
-      title: "Screen patients against recruiting trials with a sourced criterion ledger.",
-      lede: "Built for clinical research coordinators (CRCs) and clinicians who need fast, auditable eligibility calls — not a black-box score. Per-criterion reasoning is shown for every trial, with gaps flagged for follow-up.",
+      title: "Eligibility calls you can audit. Not a black-box score.",
+      lede: "Built for clinicians and clinical research coordinators. Every criterion in the protocol, judged against a structured patient record, with the source text behind each call and the gaps flagged for follow-up.",
       cta: "Clinician & CRC portal — coming soon",
     },
     partner: {
-      kicker: "Business partner portal",
-      title: "Connect sponsors, sites, and patients through transparent trial matching.",
-      lede: "Trial gives research organizations a clinical research coordinator (CRC)-first workflow for surfacing recruiting studies with documented inclusion/exclusion calls — ready for integration into your trial operations stack.",
+      kicker: "Partners",
+      title: "Patients who've already pre-screened themselves for your study.",
+      lede: "Patients find your trial, see exactly which criteria they meet and which gaps they need to close, and choose to refer themselves. You receive a structured pre-screen packet — not a cold call.",
       cta: "Partner portal — coming soon",
     },
   }[mode];
@@ -1006,11 +1256,23 @@ function Home({
     <>
       <div className="scroll home-scroll">
         <HeroVideo />
-        <div className="col home-col">
+        <div key={mode} className="col home-col home-mode-fade">
           <section className="home-hero">
             <p className="home-kicker">{copy.kicker}</p>
             <h1>{copy.title}</h1>
-            <p className="home-lede">{copy.lede}</p>
+            {mode === "patient" && (
+              <p className="home-problem">
+                The drug you start next could be the reason you can&apos;t get into a trial. Many trials exclude patients who&apos;ve already
+                tried certain therapies. Make sure you know before you decide.
+              </p>
+            )}
+            {mode !== "patient" && <p className="home-lede">{copy.lede}</p>}
+            {mode === "partner" && (
+              <p className="home-lede home-lede--follow">
+                <b>We don&apos;t sell patient lists.</b> A patient signs an authorization naming your specific study and site. Not a lead. A
+                patient who chose you.
+              </p>
+            )}
           </section>
           <div className="home-actions">
             {mode === "patient" ? (
@@ -1019,7 +1281,8 @@ function Home({
               </button>
             ) : (
               <p className="home-soon">
-                <b>{copy.cta}</b> — we&apos;re onboarding {mode === "clinician" ? "clinical teams" : "research partners"} now. Switch to{" "}
+                <b>{copy.cta}</b> —{" "}
+                {mode === "clinician" ? "we're working to onboard clinical teams" : "we're onboarding research partners now"}. Switch to{" "}
                 <button type="button" className="home-link" onClick={onSelectPatient}>
                   Patient
                 </button>{" "}
@@ -1029,6 +1292,8 @@ function Home({
           </div>
         </div>
       </div>
+      <div key={mode} className="home-mode-fade">
+      {mode === "patient" && <ClosingWindow />}
       <section ref={productRef} className="home-product" aria-label="Product information">
         <AsciiBackground trackRef={productRef} variant="subtle" className="ascii-bg ascii-bg--panel" />
         <div className="home-product__inner">
@@ -1036,9 +1301,16 @@ function Home({
             <p className="home-product__kicker">Product</p>
             <h2>Built for transparent trial matching</h2>
           </header>
-          <ProductCarousel />
+          <ProductCarousel slides={PRODUCT_CARDS[mode]} />
+          {mode === "partner" && (
+            <p className="home-stat">
+              Roughly 76% of patients considered for trials never reach first dose. The single largest cause isn&apos;t ineligibility — it&apos;s
+              patients starting another therapy before anyone showed them what it would close.
+            </p>
+          )}
         </div>
       </section>
+      </div>
     </>
   );
 }
@@ -1049,11 +1321,55 @@ function AppFooter({ theme, onTheme }: { theme: "light" | "dark"; onTheme: () =>
       <div className="site-footer__inner">
         <div className="site-footer__top">
           <div className="site-footer__brand">
-            <strong>Trial</strong>
+            <strong>Trialign</strong>
             <span>Clinical trial matching with transparent eligibility reasoning.</span>
           </div>
+        </div>
+        <div className="site-footer__cols">
+          <section>
+            <h3>Privacy</h3>
+            <p>
+              Trialign isn&apos;t a HIPAA-covered entity, and doesn&apos;t need to be. You enter your own information, or authorize your own
+              records under the 21st Century Cures Act. The disclosure is yours to make, not a hospital&apos;s.
+            </p>
+            <p>
+              <b>We don&apos;t keep your records.</b> Your information is processed to find matches and is never written to a database or storage
+              on our systems.
+            </p>
+          </section>
+          <section>
+            <h3>Who sees your data</h3>
+            <p>
+              <b>We use Claude (Anthropic) to read and structure your record.</b> Your information is sent to Anthropic&apos;s API to generate
+              your matches. Anthropic does not use it for model training, and deletes it from their systems within 30 days.
+            </p>
+            <p>
+              <b>This is the only third party your health information reaches.</b> We run no analytics, advertising, or tracking on any page that
+              touches health information.
+            </p>
+          </section>
+          <section>
+            <h3>What Trialign is not</h3>
+            <p>
+              Trialign is <b>not medical advice</b> and <b>not an eligibility determination.</b> Only a study team can confirm whether you
+              qualify, after a screening workup.
+            </p>
+            <p>
+              <b>Nothing here is a reason to delay or change treatment.</b> Bring it to your oncologist.
+            </p>
+            <p>
+              Questions: <a href="mailto:privacy@trialign.com">privacy@trialign.com</a>
+            </p>
+          </section>
+        </div>
+        <div className="site-footer__bottom">
+          <p className="site-footer__legal">
+            © 2026 Trialign · Built on FHIR R4 and mCODE — the data standard ONC and the NCI published for cancer trial matching.
+            <br />
+            Informational decision support. Not medical advice, not a final eligibility determination, not a substitute for professional clinical
+            judgment.
+          </p>
           <div className="site-footer__prefs">
-            <span className="site-footer__prefs-label">Appearance</span>
             <button
               type="button"
               className="footer-theme"
@@ -1064,37 +1380,6 @@ function AppFooter({ theme, onTheme }: { theme: "light" | "dark"; onTheme: () =>
             </button>
           </div>
         </div>
-        <div className="site-footer__cols">
-          <section>
-            <h3>HIPAA &amp; privacy</h3>
-            <p>
-              Trial is designed to support HIPAA-aligned workflows. Protected health information (PHI) is encrypted in transit and at rest,
-              access is role-based and logged, and we maintain administrative, physical, and technical safeguards consistent with the HIPAA
-              Security Rule.
-            </p>
-            <p>
-              <a href="/privacy">Read the full privacy &amp; data-handling guide →</a>
-            </p>
-          </section>
-          <section>
-            <h3>Business associate agreements</h3>
-            <p>
-              Covered entities and business associates may execute a Business Associate Agreement (BAA) before production use with real patient
-              data. Demo and evaluation environments must use de-identified or synthetic records only.
-            </p>
-          </section>
-          <section>
-            <h3>Your rights</h3>
-            <p>
-              Users may request access, amendment, or deletion of personal data subject to applicable law and contractual obligations. Report
-              security concerns to <a href="mailto:privacy@trial.health">privacy@trial.health</a>.
-            </p>
-          </section>
-        </div>
-        <p className="site-footer__legal">
-          © {new Date().getFullYear()} Trial. Informational decision support — not medical advice or a final eligibility determination.
-          Not a substitute for professional clinical judgment.
-        </p>
       </div>
     </footer>
   );
@@ -1169,7 +1454,7 @@ function Landing({
             {greeting}
           </h1>
           <p className="hero-lede">
-            Share your notes or describe your situation. I&apos;ll screen you live against recruiting ClinicalTrials.gov studies and show the
+            Describe a situation or try the sample patient. I&apos;ll screen you live against recruiting ClinicalTrials.gov studies and show the
             reasoning behind every match. It takes about two minutes:
           </p>
           <ol className="hero-steps" aria-label="How it works">
@@ -1183,74 +1468,76 @@ function Landing({
               <span className="isn">3</span> You review and edit before I search
             </li>
           </ol>
-          <div className="paste">
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                  e.preventDefault();
-                  onRead(note);
-                }
-              }}
-              placeholder="Paste your notes or describe your situation…"
+          {/* One panel: scope is answered first, then the note composer sits below the divider. */}
+          <div className="intake-card">
+            <ScopeFields
+              studyTypes={studyTypes}
+              onToggleStudyType={onToggleStudyType}
+              survey={survey}
+              onSurvey={onSurvey}
+              entrant={entrant}
+              onEntrant={onEntrant}
             />
-            {/* Composer action bar: bring-your-records options dock bottom-left
-                (Claude-desktop style), the send button anchors bottom-right. The
-                per-option descriptions live in the title tooltips. */}
-            <div className="row">
-              <div className="paste-actions">
-                <button
-                  type="button"
-                  className="composer-btn"
-                  onClick={() => fileRef.current?.click()}
-                  title="Upload a PDF — a visit summary or pathology report. I'll read the text."
-                >
-                  <span className="composer-btn__ic" aria-hidden>
-                    ⬆
-                  </span>
-                  Upload PDF
-                </button>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="application/pdf"
-                  hidden
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) onPdf(f);
-                    e.target.value = "";
-                  }}
-                />
-                <button
-                  type="button"
-                  className="composer-btn"
-                  onClick={onConnect}
-                  title="Connect my medical records — pull your chart from your provider (SMART on FHIR). Demo uses a public sandbox."
-                >
-                  <span className="composer-btn__ic" aria-hidden>
-                    ⚕
-                  </span>
-                  Connect records
-                  <span className="composer-btn__badge">FHIR</span>
+            <div className="intake-card__sep" aria-hidden />
+            <div className="paste">
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    onRead(note);
+                  }
+                }}
+                placeholder="Paste a synthetic note or describe a test scenario…"
+              />
+              {/* Composer action bar: bring-your-records options dock bottom-left
+                  (Claude-desktop style), the send button anchors bottom-right. The
+                  per-option descriptions live in the title tooltips. */}
+              <div className="row">
+                <div className="paste-actions">
+                  <button
+                    type="button"
+                    className="composer-btn"
+                    onClick={() => fileRef.current?.click()}
+                    title="Upload a PDF — try a synthetic visit summary or pathology report. I'll read the text."
+                  >
+                    <span className="composer-btn__ic" aria-hidden>
+                      ⬆
+                    </span>
+                    Upload PDF
+                  </button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="application/pdf"
+                    hidden
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) onPdf(f);
+                      e.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="composer-btn"
+                    onClick={onConnect}
+                    title="Connect my medical records — pull your chart from your provider (SMART on FHIR). Demo uses a public sandbox."
+                  >
+                    <span className="composer-btn__ic" aria-hidden>
+                      ⚕
+                    </span>
+                    Connect records
+                    <span className="composer-btn__badge">FHIR</span>
+                  </button>
+                </div>
+                <span className="sp" />
+                <button className="btn go" onClick={() => onRead(note)}>
+                  Get started →
                 </button>
               </div>
-              <span className="sp" />
-              <button className="btn go" onClick={() => onRead(note)}>
-                Get started →
-              </button>
             </div>
           </div>
-
-          {/* Scope chip row (§4) — zero added steps: collapsed with defaults visible. */}
-          <ChipRow
-            studyTypes={studyTypes}
-            onToggleStudyType={onToggleStudyType}
-            survey={survey}
-            onSurvey={onSurvey}
-            entrant={entrant}
-            onEntrant={onEntrant}
-          />
 
           <div className="chips">
             <button className="chip" onClick={onSample}>
@@ -1267,10 +1554,11 @@ function Landing({
   );
 }
 
-/* ---- Capture chip row (§4): study-type scope + travel band, zero added steps.
-   Collapsed by default with the current scope visible; expandable. Study type
-   is applied server-side before reasoning; travel ranks (never hard-filters). */
-function ChipRow({
+/* ---- Scope fields (§4): who's asking · study-type scope · travel band. Answered
+   up front, inline at the top of the intake card — before the note composer — so
+   the search is scoped before the patient shares anything. Study type is applied
+   server-side before reasoning; travel ranks (never hard-filters). */
+function ScopeFields({
   studyTypes,
   onToggleStudyType,
   survey,
@@ -1285,87 +1573,71 @@ function ChipRow({
   entrant: Entrant;
   onEntrant: (e: Entrant) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const needsLoc = travelNeedsLocation(survey.travel);
   const setTravel = (t: TravelPref) => onSurvey({ ...survey, travel: survey.travel === t ? null : t });
 
-  const typeLabels = STUDY_TYPE_CHIPS.filter((c) => studyTypes.has(c.key)).map((c) => c.label);
-  const travelLabel = survey.travel ? TRAVEL_BANDS.find((b) => b.value === survey.travel)?.label : "Anywhere (default)";
-  const entrantLabel = ENTRANTS.find((e) => e.value === entrant)?.label ?? "Patient";
-  const summary = `${entrantLabel} · ${typeLabels.length ? typeLabels.join(" + ") : "no study types selected"} · ${travelLabel}`;
-
   return (
-    <div className={`chiprow ${open ? "open" : ""}`}>
-      <button type="button" className="chiprow__bar" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span className="chiprow__k">Scope</span>
-        <span className="chiprow__sum">{summary}</span>
-        <span className="chiprow__toggle">{open ? "Done ▲" : "Adjust ▾"}</span>
-      </button>
-
-      {open && (
-        <div className="chiprow__panel">
-          <div className="chiprow__group">
-            <div className="chiprow__q">Who&apos;s filling this out?</div>
-            <div className="chiprow__bands">
-              {ENTRANTS.map((e) => (
-                <button key={e.value} type="button" className={`band ${entrant === e.value ? "on" : ""}`} onClick={() => onEntrant(e.value)}>
-                  {e.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="chiprow__group">
-            <div className="chiprow__q">What kinds of studies should I look for?</div>
-            <div className="chiprow__chips">
-              {STUDY_TYPE_CHIPS.map((c) => (
-                <button
-                  key={c.key}
-                  type="button"
-                  className={`scope-chip ${studyTypes.has(c.key) ? "on" : ""}`}
-                  aria-pressed={studyTypes.has(c.key)}
-                  onClick={() => onToggleStudyType(c.key)}
-                >
-                  <span className="scope-chip__box" aria-hidden>
-                    {studyTypes.has(c.key) ? "✓" : ""}
-                  </span>
-                  <span className="scope-chip__text">
-                    <span className="scope-chip__label">{c.label}</span>
-                    <span className="scope-chip__hint">{c.hint}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="chiprow__group">
-            <div className="chiprow__q">Where are you, and how far could you go?</div>
-            <div className="chiprow__bands">
-              {TRAVEL_BANDS.map((b) => (
-                <button key={b.value} type="button" className={`band ${survey.travel === b.value ? "on" : ""}`} onClick={() => setTravel(b.value)}>
-                  {b.label}
-                </button>
-              ))}
-            </div>
-            {needsLoc && (
-              <div className="chiprow__loc">
-                <input
-                  className="chiprow__zip"
-                  value={survey.location}
-                  onChange={(e) => onSurvey({ ...survey, location: e.target.value })}
-                  placeholder="ZIP code (e.g. 02114)"
-                  inputMode="numeric"
-                  autoComplete="postal-code"
-                  aria-label="ZIP code"
-                />
-                <span className="chiprow__lochint">
-                  ZIP only — used to <b>rank</b> by distance. Trials farther away are still shown under “Farther from you,” never dropped.
-                </span>
-              </div>
-            )}
-          </div>
+    <div className="intake-scope">
+      <div className="chiprow__group">
+        <div className="chiprow__q">Who&apos;s filling this out?</div>
+        <div className="chiprow__bands">
+          {ENTRANTS.map((e) => (
+            <button key={e.value} type="button" className={`band ${entrant === e.value ? "on" : ""}`} onClick={() => onEntrant(e.value)}>
+              {e.label}
+            </button>
+          ))}
         </div>
-      )}
+      </div>
+
+      <div className="chiprow__group">
+        <div className="chiprow__q">What kinds of studies should I look for?</div>
+        <div className="chiprow__chips">
+          {STUDY_TYPE_CHIPS.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              className={`scope-chip ${studyTypes.has(c.key) ? "on" : ""}`}
+              aria-pressed={studyTypes.has(c.key)}
+              onClick={() => onToggleStudyType(c.key)}
+            >
+              <span className="scope-chip__box" aria-hidden>
+                {studyTypes.has(c.key) ? "✓" : ""}
+              </span>
+              <span className="scope-chip__text">
+                <span className="scope-chip__label">{c.label}</span>
+                <span className="scope-chip__hint">{c.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="chiprow__group">
+        <div className="chiprow__q">Where are you, and how far could you go?</div>
+        <div className="chiprow__bands">
+          {TRAVEL_BANDS.map((b) => (
+            <button key={b.value} type="button" className={`band ${survey.travel === b.value ? "on" : ""}`} onClick={() => setTravel(b.value)}>
+              {b.label}
+            </button>
+          ))}
+        </div>
+        {needsLoc && (
+          <div className="chiprow__loc">
+            <input
+              className="chiprow__zip"
+              value={survey.location}
+              onChange={(e) => onSurvey({ ...survey, location: e.target.value })}
+              placeholder="ZIP code (e.g. 02114)"
+              inputMode="numeric"
+              autoComplete="postal-code"
+              aria-label="ZIP code"
+            />
+            <span className="chiprow__lochint">
+              ZIP only — used to <b>rank</b> by distance. Trials farther away are still shown under “Farther from you,” never dropped.
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1416,11 +1688,7 @@ function Connect({
 
           {!list && !loadErr && (
             <div className="working" style={{ marginTop: 18 }}>
-              <span className="dots">
-                <i />
-                <i />
-                <i />
-              </span>
+              <StoneLoader />
               finding available patients…
             </div>
           )}
@@ -1566,9 +1834,9 @@ function Capture({
   );
 }
 
-/* The preference survey phase was removed in §4: scope (study type + travel)
-   now lives on the Capture chip row (ChipRow), adding zero steps. Randomization
-   was dropped per §7. */
+/* The preference survey phase was removed in §4: scope (who's asking · study type ·
+   travel) now lives inline at the top of the intake card (ScopeFields), answered
+   before the note composer. Randomization was dropped per §7. */
 
 function Clarify({
   profile,
@@ -1680,6 +1948,45 @@ function ClarifyCard({
   );
 }
 
+/* Quick-check field grouping — chunk the flat mCODE field list into a few
+   human sections so the record is scannable. Matched by mCODE key first, then
+   label keywords; anything unmatched falls to a trailing "Additional" group so
+   no field is ever dropped. Original indices are preserved for inline editing. */
+type ReviewGroup = { label: string; items: { f: ProfileField; i: number }[] };
+const REVIEW_SECTIONS: { label: string; match: (f: ProfileField) => boolean }[] = [
+  {
+    label: "Demographics",
+    match: (f) => /us-core-patient|patient-/.test(f.mcode) || /\b(age|sex|gender|location|zip|residence|dob|birth)\b/i.test(f.label),
+  },
+  {
+    label: "Disease & biomarkers",
+    match: (f) =>
+      /cancer-condition|cancer-stage|secondary-cancer|tumor-marker|genomic|histolog/.test(f.mcode) ||
+      /(diagnos|stage|metasta|receptor|genomic|biomarker|histolog|her2|grade)/i.test(f.label),
+  },
+  {
+    label: "Treatment history",
+    match: (f) =>
+      /medication-administration|cancer-related-medication|procedure|radiotherapy|surgical/.test(f.mcode) ||
+      /(therap|treatment|medication|regimen|\bline\b|surgery|radiation|chemo)/i.test(f.label),
+  },
+  {
+    label: "Current status",
+    match: (f) => /ecog|karnofsky|performance|tumor/.test(f.mcode) || /(ecog|performance|measurable|recist|scan|imaging|\blab)/i.test(f.label),
+  },
+];
+function reviewGroups(fields: ProfileField[]): ReviewGroup[] {
+  const groups: ReviewGroup[] = REVIEW_SECTIONS.map((s) => ({ label: s.label, items: [] }));
+  const additional: { f: ProfileField; i: number }[] = [];
+  fields.forEach((f, i) => {
+    const si = REVIEW_SECTIONS.findIndex((s) => s.match(f));
+    if (si === -1) additional.push({ f, i });
+    else groups[si].items.push({ f, i });
+  });
+  if (additional.length) groups.push({ label: "Additional", items: additional });
+  return groups.filter((g) => g.items.length > 0);
+}
+
 function Review({
   profile,
   answers,
@@ -1728,65 +2035,61 @@ function Review({
           </div>
         </div>
 
-        {/* Federal-schema conformance — the sentence no other team will say (§6). */}
-        <div className="mcode-banner">
-          <span className="mcode-banner__chip">mCODE / USCDI+ CTM</span>
-          <span className="mcode-banner__txt">
-            Your profile is mapped to <b>mCODE 4.0.0 / US Core 6.1.0</b> — the federal Cancer Clinical Trials Matching schema. Every field is
-            labeled with its source so you see what came from your chart, a note, or you.
-          </span>
-        </div>
-
-        <div className="profile">
-          {profile.fields.map((f, i) => (
-            <div className={`prow${editing === i ? " editing" : ""}`} key={i}>
-              <span className="k">
-                {f.label}
-                {f.mcode ? <span className="mcode">{f.mcode}</span> : null}
-              </span>
-              <span className="v">
-                <SourceBadge source={f.source ?? "note"} />
-                {editing === i ? (
-                  <input
-                    className="prow-input"
-                    autoFocus
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onBlur={() => commitEdit(i)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        commitEdit(i);
-                      } else if (e.key === "Escape") {
-                        setEditing(null);
-                      }
-                    }}
-                  />
-                ) : f.clinical ? (
-                  <span className="mono">{f.value}</span>
-                ) : (
-                  f.value
-                )}
-              </span>
-              {editing === i ? (
-                <button className="edit" onClick={() => commitEdit(i)}>
-                  done
-                </button>
-              ) : (
-                <button className="edit" onClick={() => startEdit(i, f.value)}>
-                  edit
-                </button>
-              )}
+        {reviewGroups(profile.fields).map((g) => (
+          <div className="pgroup" key={g.label}>
+            <div className="pgroup-h">{g.label}</div>
+            <div className="profile">
+              {g.items.map(({ f, i }) => (
+                <div className={`prow${editing === i ? " editing" : ""}`} key={i}>
+                  {/* Schema key demoted to a tooltip — the label alone is what the patient needs. */}
+                  <span className="k" title={f.mcode || undefined}>
+                    {f.label}
+                  </span>
+                  <span className="v">
+                    <SourceBadge source={f.source ?? "note"} />
+                    {editing === i ? (
+                      <input
+                        className="prow-input"
+                        autoFocus
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onBlur={() => commitEdit(i)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitEdit(i);
+                          } else if (e.key === "Escape") {
+                            setEditing(null);
+                          }
+                        }}
+                      />
+                    ) : f.clinical ? (
+                      <span className="mono">{f.value}</span>
+                    ) : (
+                      f.value
+                    )}
+                  </span>
+                  {editing === i ? (
+                    <button className="edit" onClick={() => commitEdit(i)}>
+                      done
+                    </button>
+                  ) : (
+                    <button className="edit" onClick={() => startEdit(i, f.value)}>
+                      edit
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <ProvenanceLegend />
+          </div>
+        ))}
+        <ProvenanceLegend schema />
 
         <label className="consent">
           <input type="checkbox" checked={consent} onChange={(e) => onConsent(e.target.checked)} />
           <span>
-            I understand this is informational decision support to review with a care team — <b>not medical advice</b> — and I agree to my entered
-            information being processed to find trials. In this demo I&apos;ll use synthetic information only.
+            I understand this is informational decision support to review with a care team — <b>not medical advice</b> — and not a final
+            eligibility determination.
           </span>
         </label>
 
@@ -1801,6 +2104,18 @@ function Review({
         </div>
       </div>
     </div>
+  );
+}
+
+/** The brand's signature loader (trial-craft-motion §4): the logo's five
+ *  stepping-stone dots fading up 60ms apart. Replaces the generic working-dots. */
+function StoneLoader() {
+  return (
+    <span className="stones" aria-hidden="true">
+      <i />
+      <i />
+      <i />
+    </span>
   );
 }
 
@@ -1838,11 +2153,7 @@ function Reason({ busy, error, onRetry }: { busy: boolean; error: string | null;
                 ))}
                 {busy && (
                   <div className="working" style={{ marginTop: 10 }}>
-                    <span className="dots">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
+                    <StoneLoader />
                     reading each trial closely — one check per trial…
                   </div>
                 )}
@@ -2036,11 +2347,7 @@ function Fork({
         {loadErr && <div className="err">{loadErr}</div>}
         {!options && !loadErr && (
           <div className="working" style={{ marginTop: 6 }}>
-            <span className="dots">
-              <i />
-              <i />
-              <i />
-            </span>
+            <StoneLoader />
             reading your note for the plausible next lines of treatment…
           </div>
         )}
@@ -2095,11 +2402,7 @@ function Fork({
 
         {busy && (
           <div className="working" style={{ marginTop: 16 }}>
-            <span className="dots">
-              <i />
-              <i />
-              <i />
-            </span>
+            <StoneLoader />
             checking each open trial against that treatment — reusing the eligibility we already reasoned…
           </div>
         )}
@@ -2513,47 +2816,50 @@ function ContactRouting({ trial }: { trial: TrialMatch }) {
   const draft = `Subject: Interest in ${trial.nctId} — pre-screening\n\nHello,\n\nI'm a patient interested in ${trial.nctId} (${trial.title}). Working from my own records, my profile appears to line up with several of the published criteria, with a few items to confirm. Could you tell me whether the study is currently enrolling and what the next step would be?\n\nThank you.`;
 
   return (
-    <section id="refer-contacts" className="refer-sec">
-      <div className="refer-sec__h">Who to contact</div>
+    <section id="refer-contacts" className="packet packet-contacts">
+      <div className="packet-head">
+        <div className="packet-kicker">Who to contact</div>
+      </div>
+      <div className="packet-body">
+        {stale && (
+          <div className="stale-warn">
+            ⚠ This site's listing was last updated {months} months ago. Call to confirm they&apos;re still enrolling before you rely on it.
+          </div>
+        )}
+        <div className="slot-note">Being eligible isn&apos;t the same as having a slot — in dose-escalation trials a cohort can be full even when you qualify. Ask.</div>
 
-      {stale && (
-        <div className="stale-warn">
-          ⚠ This site's listing was last updated {months} months ago. Call to confirm they&apos;re still enrolling before you rely on it.
-        </div>
-      )}
-      <div className="slot-note">Being eligible isn&apos;t the same as having a slot — in dose-escalation trials a cohort can be full even when you qualify. Ask.</div>
+        {central.length > 0 && (
+          <div className="contact-group">
+            <div className="contact-group__h">Study contacts</div>
+            {central.map((c, i) => (
+              <div key={i} className="contact-row">
+                <span className="contact-name">{c.name}</span>
+                {c.phone && <a href={`tel:${c.phone.replace(/[^+\d]/g, "")}`}>{c.phone}</a>}
+                {c.email && <a href={`mailto:${c.email}`}>{c.email}</a>}
+              </div>
+            ))}
+          </div>
+        )}
 
-      {central.length > 0 && (
         <div className="contact-group">
-          <div className="contact-group__h">Study contacts</div>
-          {central.map((c, i) => (
-            <div key={i} className="contact-row">
-              <span className="contact-name">{c.name}</span>
-              {c.phone && <a href={`tel:${c.phone.replace(/[^+\d]/g, "")}`}>{c.phone}</a>}
-              {c.email && <a href={`mailto:${c.email}`}>{c.email}</a>}
+          <div className="contact-group__h">Sites (nearest first — matched at city/state level, not exact miles)</div>
+          {sites.slice(0, 6).map((s, i) => (
+            <div key={i} className="site-row">
+              <span className="site-place">
+                {[s.city, s.state, s.country].filter(Boolean).join(", ") || s.facility}
+              </span>
+              <span className="site-facility">{s.facility}</span>
+              {s.status && <span className="mono site-status">{s.status}</span>}
             </div>
           ))}
+          {sites.length > 6 && <div className="refer-empty">+{sites.length - 6} more sites on ClinicalTrials.gov.</div>}
         </div>
-      )}
 
-      <div className="contact-group">
-        <div className="contact-group__h">Sites (nearest first — matched at city/state level, not exact miles)</div>
-        {sites.slice(0, 6).map((s, i) => (
-          <div key={i} className="site-row">
-            <span className="site-place">
-              {[s.city, s.state, s.country].filter(Boolean).join(", ") || s.facility}
-            </span>
-            <span className="site-facility">{s.facility}</span>
-            {s.status && <span className="mono site-status">{s.status}</span>}
-          </div>
-        ))}
-        {sites.length > 6 && <div className="refer-empty">+{sites.length - 6} more sites on ClinicalTrials.gov.</div>}
-      </div>
-
-      <div className="draft-email">
-        <div className="contact-group__h">Draft outreach {email ? `to ${email}` : ""}</div>
-        <pre className="draft-body">{draft}</pre>
-        <CopyButton text={draft} label="Copy email" />
+        <div className="draft-email">
+          <div className="contact-group__h">Draft outreach {email ? `to ${email}` : ""}</div>
+          <pre className="draft-body">{draft}</pre>
+          <CopyButton text={draft} label="Copy email" />
+        </div>
       </div>
     </section>
   );
@@ -2591,8 +2897,8 @@ Thank you,
     <div className="packet packet-a">
       <div className="packet-head">
         <div className="packet-kicker">Packet A · bring this to your oncologist</div>
-        <button className="btn" onClick={() => printPacket("printing-a")}>
-          ⎙ Print
+        <button className="btn packet-print" onClick={() => printPacket("printing-a")}>
+          Print
         </button>
       </div>
       <div className="packet-body">
@@ -2623,8 +2929,8 @@ function PacketB({ trial, profile }: { trial: TrialMatch; profile: Profile }) {
     <div className="packet packet-b">
       <div className="packet-head">
         <div className="packet-kicker">Packet B · for the study coordinator</div>
-        <button className="btn" onClick={() => printPacket("printing-b")}>
-          ⎙ Print
+        <button className="btn packet-print" onClick={() => printPacket("printing-b")}>
+          Print
         </button>
       </div>
       <div className="packet-body">
@@ -2747,6 +3053,17 @@ function ReferTimeline({ gaps, trial }: { gaps: Criterion[]; trial: TrialMatch }
   );
 }
 
+/* ─────────────────────────────────────────────────────────
+ * RESULTS REVEAL STORYBOARD — the "match-found" moment
+ *     0ms   counts row + summary settle in (the eligible number lands)
+ *   260ms   result cards stagger up (70ms apart, translateY + fade)
+ * A single `stage` integer drives it; reduced-motion skips to the end.
+ * (Interface Craft storyboard structure, implemented in CSS per
+ *  trial-craft-motion — a predetermined reveal, so no Framer Motion.)
+ * ───────────────────────────────────────────────────────── */
+const REVEAL = { counts: 20, cards: 260 }; // ms after mount
+const CARD_STAGGER = 70; // ms between successive cards
+
 function Results({
   data,
   prefs,
@@ -2789,6 +3106,18 @@ function Results({
   const { counts, matches, conditionQuery, location } = data;
   const active = prefs.size > 0;
   const [showAllScreened, setShowAllScreened] = useState(false);
+
+  // Drive the match-found reveal (see REVEAL storyboard above the component).
+  const [stage, setStage] = useState(0); // 0 hidden · 1 counts in · 2 cards in
+  useEffect(() => {
+    const reduce = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      setStage(2);
+      return;
+    }
+    const timers = [setTimeout(() => setStage(1), REVEAL.counts), setTimeout(() => setStage(2), REVEAL.cards)];
+    return () => timers.forEach(clearTimeout);
+  }, []);
   // "Your next steps" is only meaningful once the patient is fully eligible for at
   // least one trial — those are the ones worth acting on. Uncertain trials still
   // have open questions (surfaced inline on the card); ruled-out trials are moot.
@@ -2837,7 +3166,7 @@ function Results({
   const totalShown = inRange.length + farther.length + ruledOut.length + screened.length;
   const filtersActive = statusFilter !== "all" || studyFilter !== "all" || phaseFilter.size > 0 || query.trim().length > 0;
 
-  const card = (m: TrialMatch) => (
+  const card = (m: TrialMatch, i: number) => (
     <DecisionCard
       key={m.nctId}
       m={m}
@@ -2848,6 +3177,8 @@ function Results({
       onResolve={onResolve}
       onOpenNextSteps={onOpenNextSteps}
       onRefer={onRefer}
+      revealIndex={i}
+      revealActive={stage >= 2}
     />
   );
 
@@ -2856,7 +3187,7 @@ function Results({
 
   return (
     <div className="scroll">
-      <div className="board board--results">
+      <div className="board board--results" data-reveal={stage} style={{ "--card-stagger": `${CARD_STAGGER}ms` } as React.CSSProperties}>
         <div className="board-head">
           <h2>Matches for you</h2>
           <div className="board-head-r">
@@ -3086,6 +3417,8 @@ const DecisionCard = memo(function DecisionCard({
   onOpenNextSteps,
   onRefer,
   hideHead = false,
+  revealIndex = 0,
+  revealActive = true,
 }: {
   m: TrialMatch;
   saved: boolean;
@@ -3096,11 +3429,16 @@ const DecisionCard = memo(function DecisionCard({
   onOpenNextSteps: () => void;
   onRefer: (nctId: string) => void;
   hideHead?: boolean;
+  /** Match-found reveal: stagger order + whether the reveal has fired.
+   *  Defaults keep the card fully visible for any non-reveal usage. */
+  revealIndex?: number;
+  revealActive?: boolean;
 }) {
   const label = m.status === "eligible" ? "Eligible" : m.status === "uncertain" ? "Needs info" : "Ruled out";
   const near = m.status === "near";
-  // A referral only makes sense for a trial the patient is still open to.
-  const canRefer = m.status === "eligible" || m.status === "uncertain";
+  // Referral is offered ONLY for trials the patient has fully met eligibility for
+  // (Eligible) — never for "Needs info"/uncertain, where eligibility isn't established.
+  const canRefer = m.status === "eligible";
   const tally = ledgerTally(m.criteria);
   // Lazy-render the ledger body: it's the densest part of the page, so we only
   // build its rows when the accordion is actually open (near-misses open by default).
@@ -3113,7 +3451,12 @@ const DecisionCard = memo(function DecisionCard({
   const enrollHead = enroll ? enroll.split(" · ")[0] : "";
 
   return (
-    <div id={`trial-${m.nctId}`} className={`dcard ${m.status}${flash ? " flash" : ""}`}>
+    <div
+      id={`trial-${m.nctId}`}
+      className={`dcard ${m.status}${flash ? " flash" : ""}`}
+      data-rev={revealActive ? "in" : "out"}
+      style={{ "--rev-i": revealIndex } as React.CSSProperties}
+    >
       {!hideHead && (
       <div className="dc-head">
         <div className="dc-title">

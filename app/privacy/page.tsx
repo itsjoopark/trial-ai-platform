@@ -2,9 +2,9 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Privacy & data handling · Trial",
+  title: "Privacy & data handling · Trialign",
   description:
-    "How Trial handles data, where inference happens, PHI boundaries, and retention — the compliance detail partner organizations need before inputting patient data.",
+    "How Trialign handles data, where inference happens, PHI boundaries, and retention — the compliance detail partner organizations need before inputting patient data.",
 };
 
 /* ============================================================================
@@ -22,13 +22,13 @@ export default function PrivacyPage() {
     <div className="legal">
       <div className="legal-inner">
         <p className="legal-eyebrow">
-          <Link href="/">← Back to Trial</Link>
+          <Link href="/">← Back to Trialign</Link>
         </p>
 
         <header className="legal-head">
           <h1>Privacy &amp; data handling</h1>
           <p className="legal-lede">
-            The detailed reference for clinical-data professionals and partner organizations evaluating Trial. It covers what
+            The detailed reference for clinical-data professionals and partner organizations evaluating Trialign. It covers what
             data we touch, where inference happens, the PHI boundaries we enforce, and how long anything is kept.
           </p>
           <p className="legal-meta">
@@ -44,7 +44,7 @@ export default function PrivacyPage() {
         </div>
 
         <section className="legal-sec">
-          <h2>1. What data Trial processes</h2>
+          <h2>1. What data Trialign processes</h2>
           <ul>
             <li>
               <b>The information you enter</b> — the free-text note or structured fields describing a patient, plus the intake
@@ -72,7 +72,7 @@ export default function PrivacyPage() {
           <ul>
             <li>Model provider: Anthropic (Claude). Inputs are processed to return the structured profile and the ledger.</li>
             <li>
-              Trial does not use your entered data to train models, and Anthropic does not train on API traffic under its
+              Trialign does not use your entered data to train models, and Anthropic does not train on API traffic under its
               commercial terms.
             </li>
             <li>Registry provider: ClinicalTrials.gov (U.S. National Library of Medicine) — public data, no PHI transmitted.</li>
@@ -117,7 +117,7 @@ export default function PrivacyPage() {
         <section className="legal-sec">
           <h2>5. Registry coverage &amp; limits</h2>
           <p>
-            Trial screens against ClinicalTrials.gov today. It is not a catch-all: some studies register only with national or
+            Trialign screens against ClinicalTrials.gov today. It is not a catch-all: some studies register only with national or
             regional registries (ISRCTN, EU CTIS, Health Canada, and others). Retrieval is built as a registry-agnostic adapter
             layer so additional registries can be added without changing how eligibility is reasoned. Absence of a match here is
             not evidence that no trial exists.
@@ -133,7 +133,7 @@ export default function PrivacyPage() {
         </section>
 
         <p className="legal-foot">
-          <Link href="/">← Back to Trial</Link>
+          <Link href="/">← Back to Trialign</Link>
         </p>
       </div>
     </div>

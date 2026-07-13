@@ -1,5 +1,5 @@
 /* ============================================================================
-   Trial — the verdict meaning system (single source of truth)
+   Trialign — the verdict meaning system (single source of truth)
 
    The verdict triad (meets/clear/confirm/fails) and the fail-closed derivation
    of a trial's overall status are the product's trust surface. They must read

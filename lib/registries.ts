@@ -1,5 +1,5 @@
 /* ============================================================================
-   Trial — registry-agnostic retrieval layer
+   Trialign — registry-agnostic retrieval layer
 
    ClinicalTrials.gov is not a catch-all: not every study registers there, and
    many cross-register with national/regional registries. So retrieval is

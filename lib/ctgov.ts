@@ -1,5 +1,5 @@
 /* ============================================================================
-   Trial — ClinicalTrials.gov v2 client
+   Trialign — ClinicalTrials.gov v2 client
 
    Server-side only. The public v2 API needs no key but does NOT send CORS
    headers, so the browser can't call it directly — everything here runs in a

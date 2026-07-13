@@ -22,7 +22,7 @@ import { VERDICT_RULES } from "@/lib/verdict";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-const SYSTEM = `You are the coordinating agent for Trial, re-judging specific eligibility criteria for ONE patient against ONE clinical trial after the patient supplied additional information.
+const SYSTEM = `You are the coordinating agent for Trialign, re-judging specific eligibility criteria for ONE patient against ONE clinical trial after the patient supplied additional information.
 
 You are given the patient's structured profile (which already includes any info they just added, tagged as told-by-you) and a short list of criteria that were previously open ("confirm") or that this new info might bear on. Re-judge EACH criterion, in order.
 

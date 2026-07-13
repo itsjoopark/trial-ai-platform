@@ -31,12 +31,12 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <div className="auth-card">
-        <Link href="/" className="auth-brand" aria-label="Trial home">
+        <Link href="/" className="auth-brand" aria-label="Trialign home">
           <TrialLogo />
-          <span>Trial</span>
+          <span>Trialign</span>
         </Link>
         <h1>Welcome back</h1>
-        <p className="auth-sub">Log in to your Trial account.</p>
+        <p className="auth-sub">Log in to your Trialign account.</p>
 
         <form className="auth-form" onSubmit={onSubmit} noValidate>
           <label className="auth-field">
@@ -70,7 +70,7 @@ export default function LoginPage() {
         </form>
 
         <p className="auth-alt">
-          New to Trial? <Link href="/signup">Create an account</Link>
+          New to Trialign? <Link href="/signup">Create an account</Link>
         </p>
         <p className="auth-demo-note">Demo sign-in — any email and password are accepted; no real account or data is created.</p>
         <Link href="/" className="auth-back">

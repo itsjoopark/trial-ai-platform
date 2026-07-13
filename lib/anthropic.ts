@@ -1,5 +1,5 @@
 /* ============================================================================
-   Trial — Anthropic client
+   Trialign — Anthropic client
 
    One place to construct the client and pin the model. The key is read from
    ANTHROPIC_API_KEY (env). We default to Claude Opus 4.8 — the eligibility

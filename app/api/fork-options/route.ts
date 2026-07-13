@@ -41,7 +41,7 @@ export const FORK_FIXED = {
   },
 };
 
-const SYSTEM = `You are the coordinating agent for Trial. Given one patient's profile (read from their own note), enumerate the PLAUSIBLE NEXT LINES OF TREATMENT for them — the standard-of-care options an oncologist would realistically weigh next.
+const SYSTEM = `You are the coordinating agent for Trialign. Given one patient's profile (read from their own note), enumerate the PLAUSIBLE NEXT LINES OF TREATMENT for them — the standard-of-care options an oncologist would realistically weigh next.
 
 Rules:
 - Ground every option in THIS patient's note: disease + subtype, biomarkers, receptor status, and what they have already had. Do not propose a line the note has already exhausted or ruled out.

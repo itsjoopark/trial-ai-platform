@@ -1,5 +1,5 @@
 /* ============================================================================
-   Trial — Zod schemas for Claude structured outputs
+   Trialign — Zod schemas for Claude structured outputs
 
    These constrain what Claude returns (via output_config.format), so the route
    handlers get validated, typed objects rather than free text. Structured
