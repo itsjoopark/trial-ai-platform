@@ -29,9 +29,6 @@ npm install
 cp .env.example .env.local     # then paste your ANTHROPIC_API_KEY into .env.local
 npm run dev                    # http://localhost:3000
 ```
-
-Get an Anthropic key at <https://console.anthropic.com>. ClinicalTrials.gov needs no key.
-
 Click **"Try a sample patient (Margaret)"** to run the whole flow. Light mode is the default; a
 **Dark** toggle sits in the header.
 
