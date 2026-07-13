@@ -25,7 +25,16 @@ export default function HeroVideo() {
 
   return (
     <div className="hero-video" aria-hidden="true">
-      <video ref={ref} className="hero-video__el" autoPlay muted loop playsInline preload="auto">
+      <video
+        ref={ref}
+        className="hero-video__el"
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="auto"
+        poster="/trial-hero-poster.jpg"
+      >
         <source src="/trial-video.mp4" type="video/mp4" />
       </video>
       <div className="hero-video__scrim" />
