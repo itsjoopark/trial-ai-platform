@@ -1,4 +1,4 @@
-# Trial
+# Trialign
 
 A patient- and caregiver-facing clinical trial matcher with **coordinator-grade output** — describe
 your situation, upload a note, or connect your records, and Trial surfaces the **recruiting
