@@ -18,6 +18,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import AgentAvatar from "@/app/components/AgentAvatar";
 import TrialLogo from "@/app/components/TrialLogo";
 import AsciiBackground from "@/app/components/AsciiBackground";
+import HeroVideo from "@/app/components/HeroVideo";
 import ProductCarousel from "@/app/components/ProductCarousel";
 import type { TrialMatch, Criterion, Verdict, MatchStatus } from "@/lib/types";
 import { deriveStatus, metCountOf } from "@/lib/verdict";
@@ -621,7 +622,9 @@ export default function Page() {
 
   return (
     <div className="app" ref={appRef}>
-      <AsciiBackground trackRef={appRef} />
+      {/* front-landing hero uses a video backdrop (HeroVideo) instead of the
+          ASCII; keep the ASCII app-wide everywhere else */}
+      {phase !== "home" && <AsciiBackground trackRef={appRef} />}
 
       {inShell ? (
         <div className="shell">
@@ -976,6 +979,7 @@ function Home({
   return (
     <>
       <div className="scroll home-scroll">
+        <HeroVideo />
         <div className="col home-col">
           <section className="home-hero">
             <p className="home-kicker">{copy.kicker}</p>

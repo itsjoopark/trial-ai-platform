@@ -31,3 +31,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# large experimental hero video (not committed — see HeroVideo)
+/public/trial-video.mp4
