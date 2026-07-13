@@ -14,32 +14,84 @@
        &fields=<allowlist>
    ========================================================================== */
 
-import type { Trial, TrialLocation } from "./types";
+import type { Trial, TrialLocation, TrialContact } from "./types";
 
 const BASE = "https://clinicaltrials.gov/api/v2/studies";
 
 const FIELDS = [
   "protocolSection.identificationModule",
   "protocolSection.statusModule.overallStatus",
+  "protocolSection.statusModule.startDateStruct",
+  "protocolSection.statusModule.primaryCompletionDateStruct",
+  "protocolSection.statusModule.completionDateStruct",
+  "protocolSection.statusModule.lastUpdatePostDateStruct",
   "protocolSection.designModule",
   "protocolSection.armsInterventionsModule.interventions",
   "protocolSection.conditionsModule",
   "protocolSection.sponsorCollaboratorsModule.leadSponsor",
   "protocolSection.eligibilityModule",
+  "protocolSection.contactsLocationsModule.centralContacts",
   "protocolSection.contactsLocationsModule.locations",
 ].join(",");
 
+/* ---- study-type scope (intake-prd §4.1) — patient chips → v2 API filter ----
+   The chips are patient language, not the CT.gov taxonomy. Each maps to an Essie
+   query clause on filter.advanced (AND/OR/AREA[...] — all verified live against
+   the v2 API). "Treatment" and "Tests and monitoring" are both INTERVENTIONAL,
+   split by primary purpose; observational and expanded access are study types.
+   Applied server-side so excluded studies never reach the Claude reasoning pass. */
+export type StudyTypeKey = "treatment" | "tests" | "observational" | "expanded";
+
+function studyTypeClause(k: StudyTypeKey): string {
+  switch (k) {
+    case "treatment":
+      return "(AREA[StudyType]INTERVENTIONAL AND AREA[DesignPrimaryPurpose]TREATMENT)";
+    case "tests":
+      return "(AREA[StudyType]INTERVENTIONAL AND AREA[DesignPrimaryPurpose](DIAGNOSTIC OR SCREENING OR SUPPORTIVE_CARE OR HEALTH_SERVICES_RESEARCH OR DEVICE_FEASIBILITY))";
+    case "observational":
+      return "AREA[StudyType]OBSERVATIONAL";
+    case "expanded":
+      return "AREA[StudyType]EXPANDED_ACCESS";
+  }
+}
+
+/** Build the v2 filter for a study-type selection. Returns the filter.advanced
+ *  Essie expression (or null when unfiltered) plus the overallStatus values.
+ *  Expanded-access records are AVAILABLE, not RECRUITING, so that chip broadens
+ *  the status filter. When both interventional chips are on we collapse to plain
+ *  INTERVENTIONAL so interventional studies without a primaryPurpose aren't dropped. */
+export function buildStudyTypeFilter(types: StudyTypeKey[]): { advanced: string | null; statuses: string[] } {
+  const set = new Set(types);
+  const statuses = ["RECRUITING"];
+  if (set.has("expanded")) statuses.push("AVAILABLE");
+  if (set.size === 0) return { advanced: null, statuses };
+
+  const clauses: string[] = [];
+  if (set.has("treatment") && set.has("tests")) clauses.push("AREA[StudyType]INTERVENTIONAL");
+  else {
+    if (set.has("treatment")) clauses.push(studyTypeClause("treatment"));
+    if (set.has("tests")) clauses.push(studyTypeClause("tests"));
+  }
+  if (set.has("observational")) clauses.push(studyTypeClause("observational"));
+  if (set.has("expanded")) clauses.push(studyTypeClause("expanded"));
+
+  return { advanced: clauses.length ? clauses.join(" OR ") : null, statuses };
+}
+
 export type SearchOptions = {
   cond: string;
-  status?: string; // default RECRUITING
+  status?: string; // overrides the study-type-derived status when set
   pageSize?: number; // default 30
+  studyTypes?: StudyTypeKey[]; // §4.1 scope; empty/undefined = no study-type filter
 };
 
 /** Search recruiting trials for a condition and return normalized Trial[]. */
 export async function searchTrials(opts: SearchOptions): Promise<Trial[]> {
   const params = new URLSearchParams();
   if (opts.cond) params.set("query.cond", opts.cond);
-  params.set("filter.overallStatus", opts.status ?? "RECRUITING");
+  const { advanced, statuses } = buildStudyTypeFilter(opts.studyTypes ?? []);
+  params.set("filter.overallStatus", opts.status ?? statuses.join(","));
+  if (advanced) params.set("filter.advanced", advanced);
   params.set("pageSize", String(opts.pageSize ?? 30));
   params.set("fields", FIELDS);
 
@@ -66,7 +118,13 @@ export async function searchTrials(opts: SearchOptions): Promise<Trial[]> {
 type RawStudy = {
   protocolSection?: {
     identificationModule?: { nctId?: string; briefTitle?: string; officialTitle?: string };
-    statusModule?: { overallStatus?: string };
+    statusModule?: {
+      overallStatus?: string;
+      startDateStruct?: { date?: string };
+      primaryCompletionDateStruct?: { date?: string };
+      completionDateStruct?: { date?: string };
+      lastUpdatePostDateStruct?: { date?: string };
+    };
     designModule?: {
       studyType?: string;
       phases?: string[];
@@ -87,9 +145,11 @@ type RawStudy = {
       minimumAge?: string;
       stdAges?: string[];
     };
-    contactsLocationsModule?: { locations?: RawLocation[] };
+    contactsLocationsModule?: { centralContacts?: RawContact[]; locations?: RawLocation[] };
   };
 };
+
+type RawContact = { name?: string; role?: string; phone?: string; email?: string };
 
 type RawLocation = {
   facility?: string;
@@ -97,7 +157,16 @@ type RawLocation = {
   state?: string;
   country?: string;
   status?: string;
+  contacts?: RawContact[];
 };
+
+function normalizeContact(c: RawContact): TrialContact {
+  return { name: c.name ?? "", role: c.role ?? "", phone: c.phone ?? "", email: c.email ?? "" };
+}
+/** Keep only contacts a patient could actually use to reach out. */
+function usableContacts(list?: RawContact[]): TrialContact[] {
+  return (list ?? []).map(normalizeContact).filter((c) => c.name && (c.phone || c.email));
+}
 
 function normalizeStudy(study: RawStudy): Trial | null {
   const p = study.protocolSection;
@@ -110,6 +179,7 @@ function normalizeStudy(study: RawStudy): Trial | null {
     state: l.state ?? "",
     country: l.country ?? "",
     status: l.status ?? "",
+    contacts: usableContacts(l.contacts),
   }));
 
   const design = p?.designModule;
@@ -135,6 +205,12 @@ function normalizeStudy(study: RawStudy): Trial | null {
     stdAges: p?.eligibilityModule?.stdAges ?? [],
     locations,
     url: `https://clinicaltrials.gov/study/${id.nctId}`,
+    startDate: p?.statusModule?.startDateStruct?.date ?? "",
+    primaryCompletionDate: p?.statusModule?.primaryCompletionDateStruct?.date ?? "",
+    completionDate: p?.statusModule?.completionDateStruct?.date ?? "",
+    lastUpdatePostDate: p?.statusModule?.lastUpdatePostDateStruct?.date ?? "",
+    registry: "ClinicalTrials.gov",
+    contacts: usableContacts(p?.contactsLocationsModule?.centralContacts),
     randomized: (info?.allocation ?? "").toUpperCase() === "RANDOMIZED",
     masked: masking !== "" && masking !== "NONE",
     primaryPurpose: titleCase(info?.primaryPurpose ?? ""),

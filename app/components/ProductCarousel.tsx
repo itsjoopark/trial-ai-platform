@@ -23,7 +23,7 @@ const SLIDES = [
   {
     title: "Questions that matter",
     body: "Trial asks only clarifications whose answer changes which trials qualify.",
-    detail: "Coordinators confirm the profile before screening begins.",
+    detail: "Clinical research coordinators (CRCs) confirm the profile before screening begins.",
   },
   {
     title: "Ranked, explainable results",

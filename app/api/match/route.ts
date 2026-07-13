@@ -21,7 +21,9 @@ import { NextResponse } from "next/server";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { anthropic, MODEL } from "@/lib/anthropic";
 import { LedgerSchema } from "@/lib/schemas";
-import { searchTrials } from "@/lib/ctgov";
+import { searchRegistries } from "@/lib/registries";
+import type { StudyTypeKey } from "@/lib/ctgov";
+import { VERDICT_RULES, deriveStatus, metCountOf } from "@/lib/verdict";
 import type { Trial, TrialMatch, MatchStatus, Criterion, DecisionFactors } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -36,29 +38,67 @@ const SYSTEM = `You are the coordinating agent for Trial, screening one patient 
 
 You are given a structured patient profile and the verbatim inclusion/exclusion text from ClinicalTrials.gov. Segment that text into atomic criteria and judge each against the profile.
 
-Verdict rules (this is the product's meaning system — be exact):
-- meets  : an INCLUSION criterion the patient satisfies. Cite the evidence.
-- clear  : an EXCLUSION criterion that is NOT triggered (good for the patient).
-- confirm: the record genuinely lacks the data to judge this criterion. Say so — never guess it into a pass or a fail. This becomes a coordinator to-do (e.g. "confirm RECIST measurability", "confirm HbA1c").
-- fails  : an INCLUSION criterion the patient does not meet, OR an EXCLUSION criterion that IS triggered.
+${VERDICT_RULES}
 
-Hard requirements:
-- Fail closed. If the patient is a near-miss, list EVERY failing criterion, not just the first. A false "so close" is worse than a clean no.
-- Cite the record in the coordinator's words in the evidence field. Bold the specific value that drove the call is not needed — just be concrete.
-- Do not invent patient data. If the profile is silent on something a criterion needs, that criterion is "confirm", not a pass.
-- Keep requirements atomic and in plain clinical language.
+For EACH criterion, also set \`provenance\` — where the evidence for your judgment came from (this is descriptive and NEVER changes the verdict):
+- "fhir": the profile value you relied on is structured chart data (imported via SMART on FHIR).
+- "note": you relied on a clinical narrative/note value.
+- "you": you relied on something the patient stated/told us directly.
+- "not_documented": nothing in the record addresses this criterion. Use this ONLY together with a "confirm" verdict (it marks the gap the coordinator would otherwise phone to discover).
 
 THEN produce a patient-facing decision brief (the \`brief\` field) to help this person weigh the trial with their care team:
-- Write for the PATIENT, in plain language — not clinical shorthand or abbreviations.
+- Write for the reader named in the ADDRESSEE section at the end of this prompt — follow its voice and plain-language rules. Apply the same addressee to the headline field (it overrides any "speak to you" wording in the field schema when the addressee is a caregiver or clinician).
 - Ground offers / commitment / uncertainty ONLY in the trial facts given to you (phase, purpose, randomization/masking, interventions, nearest site) and your eligibility findings. Never invent efficacy, outcomes, or benefit.
 - Be phase-honest: a Phase 1 study tests safety and dosing and benefit to the patient is unproven; an observational study contributes data and provides no treatment; only later-phase interventional studies test whether a treatment works.
 - Non-directive: NEVER tell the patient which trial to choose, or call any trial "best" or "recommended". You frame the decision; the patient and their care team make it.
 - questionsToAsk: turn the 'confirm' items and the real uncertainties into 2–3 specific questions this patient should bring to their care team.`;
 
+/* §5.3 — "Who's filling this out?" changes ONLY the addressee/voice of the brief
+   and headline. Every eligibility rule (verdicts, citation, fail-closed) is
+   identical across entrants. voiceRules() is appended to SYSTEM per request. */
+type Entrant = "patient" | "caregiver" | "clinician";
+function normalizeEntrant(input?: string): Entrant {
+  return input === "caregiver" || input === "clinician" ? input : "patient";
+}
+function voiceRules(entrant: Entrant): string {
+  switch (entrant) {
+    case "caregiver":
+      return `ADDRESSEE — a family member or caregiver is reading this on behalf of the patient:
+- Address the caregiver ABOUT the patient. Refer to the patient as "your loved one" — never invent a name, and never use "you" to mean the patient.
+- Keep plain language and gloss any clinical term once. All non-directive, citation, and fail-closed rules apply exactly as stated above.`;
+    case "clinician":
+      return `ADDRESSEE — a clinician is reading this:
+- A clinical register is acceptable; you may use standard oncology terminology WITHOUT glossing it into plain language. Refer to "the patient". Keep it concise and professional.
+- All non-directive, citation, and fail-closed rules apply exactly as stated above — voice is the ONLY thing that changes.`;
+    default:
+      return `ADDRESSEE — the patient is reading this (default voice):
+- Address the patient directly as "you". Plain language; gloss any clinical term once.`;
+  }
+}
+
+type MatchBody = {
+  conditionQuery?: string;
+  summary?: string;
+  fields?: { label: string; value: string }[];
+  /** Explicit location captured in the intake survey (city, state, or ZIP). */
+  location?: string;
+  /** Travel preference: "local" (~25mi) · "regional" (~100mi) · "any". */
+  travel?: "local" | "regional" | "any" | null;
+  /** Study-type scope chips (§4.1). Applied at the registry before reasoning. */
+  studyTypes?: string[];
+  /** Who's filling this out (§5.3) — changes the brief/headline voice only. */
+  entrant?: string;
+};
+
+const VALID_STUDY_TYPES: StudyTypeKey[] = ["treatment", "tests", "observational", "expanded"];
+function sanitizeStudyTypes(input?: string[]): StudyTypeKey[] {
+  return (input ?? []).filter((s): s is StudyTypeKey => (VALID_STUDY_TYPES as string[]).includes(s));
+}
+
 export async function POST(req: Request) {
-  let profile: { conditionQuery?: string; summary?: string; fields?: { label: string; value: string }[] };
+  let profile: MatchBody;
   try {
-    profile = (await req.json()) as typeof profile;
+    profile = (await req.json()) as MatchBody;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
@@ -70,21 +110,30 @@ export async function POST(req: Request) {
 
   let pool: Trial[];
   try {
-    pool = await searchTrials({ cond, pageSize: CANDIDATE_POOL });
+    // §4.1: scope the candidate set at the registry so excluded study types never
+    // reach the pool and never consume a Claude reasoning call.
+    pool = await searchRegistries({ cond, pageSize: CANDIDATE_POOL, studyTypes: sanitizeStudyTypes(profile.studyTypes) });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "ClinicalTrials.gov request failed.";
+    const message = err instanceof Error ? err.message : "Trial registry request failed.";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 
   const profileText = renderProfile(profile);
-  const patient = derivePatientLoc(profile.fields ?? []);
+  // Prefer the explicitly captured survey location; fall back to any location
+  // read out of the note. Distance filtering only bites when we actually have one.
+  const patient = derivePatientLoc(profile.fields ?? [], profile.location);
+  const travelThr = travelThreshold(profile.travel ?? null);
+  const geo: GeoContext = { patient, travelThr };
   const toReason = pool.slice(0, DEEP_REASON_COUNT);
   const screenedOnly = pool.slice(DEEP_REASON_COUNT);
+
+  // Compose the addressee voice (§5.3) onto the base system prompt once per search.
+  const system = `${SYSTEM}\n\n${voiceRules(normalizeEntrant(profile.entrant))}`;
 
   let reasoned: TrialMatch[];
   try {
     const client = anthropic();
-    reasoned = await mapPool(toReason, CONCURRENCY, (trial) => reasonTrial(client, profileText, trial, patient));
+    reasoned = await mapPool(toReason, CONCURRENCY, (trial) => reasonTrial(client, system, profileText, trial, geo));
   } catch (err) {
     const message = err instanceof Error ? err.message : "Reasoning failed.";
     const status = message.includes("ANTHROPIC_API_KEY") ? 500 : 502;
@@ -107,7 +156,7 @@ export async function POST(req: Request) {
     metCount: 0,
     total: 0,
     brief: null,
-    factors: computeFactors(t, patient),
+    factors: computeFactors(t, geo),
   }));
 
   const matches = [...reasoned, ...screened];
@@ -120,18 +169,29 @@ export async function POST(req: Request) {
     screened: screened.length,
   };
 
-  return NextResponse.json({ conditionQuery: cond, summary: profile.summary ?? "", counts, matches });
+  // Location filtering is only meaningful when we have BOTH a patient location
+  // and a distance preference — otherwise say so, never imply a filter ran.
+  const locationApplied = patient.known && travelThr > 0;
+  const location = {
+    applied: locationApplied,
+    label: (profile.location ?? "").trim(),
+    travel: profile.travel ?? null,
+    inRange: locationApplied ? reasoned.filter((m) => m.factors.withinRange === true).length : 0,
+  };
+
+  return NextResponse.json({ conditionQuery: cond, summary: profile.summary ?? "", counts, location, matches });
 }
 
 /* ---- per-trial reasoning ---- */
 
 async function reasonTrial(
   client: ReturnType<typeof anthropic>,
+  system: string,
   profileText: string,
   trial: Trial,
-  patient: PatientLoc,
+  geo: GeoContext,
 ): Promise<TrialMatch> {
-  const factors = computeFactors(trial, patient);
+  const factors = computeFactors(trial, geo);
 
   // No eligibility text → nothing to reason over; surface as screened rather
   // than burning a call on an empty prompt.
@@ -151,7 +211,7 @@ async function reasonTrial(
     model: MODEL,
     max_tokens: 8000,
     thinking: { type: "adaptive" },
-    system: SYSTEM,
+    system,
     output_config: { format: zodOutputFormat(LedgerSchema) },
     messages: [
       {
@@ -172,14 +232,13 @@ async function reasonTrial(
   const criteria = (ledger?.criteria ?? []) as Criterion[];
   const brief = ledger?.brief ?? null;
   const total = criteria.length;
-  const metCount = criteria.filter((c) => c.verdict === "meets" || c.verdict === "clear").length;
 
-  // Status derived from the criteria — fail-closed, explainable.
-  const hasFail = criteria.some((c) => c.verdict === "fails");
-  const hasConfirm = criteria.some((c) => c.verdict === "confirm");
-  const status: MatchStatus = total === 0 ? "screened" : hasFail ? "near" : hasConfirm ? "uncertain" : "eligible";
+  // Status/tally derived from the criteria — fail-closed, explainable. Shared
+  // with /api/reconfirm and the client so a resolved "confirm" re-derives the
+  // same way it was first computed.
+  const status = deriveStatus(criteria);
 
-  return { ...trial, status, headline: ledger?.headline ?? "", criteria, metCount, total, brief, factors };
+  return { ...trial, status, headline: ledger?.headline ?? "", criteria, metCount: metCountOf(criteria), total, brief, factors };
 }
 
 /* ---- helpers ---- */
@@ -194,6 +253,23 @@ function renderProfile(profile: { summary?: string; fields?: { label: string; va
 /* ---- decision factors (deterministic — computed in code, never from the model) ---- */
 
 type PatientLoc = { tokens: Set<string>; known: boolean };
+
+/** Everything the deterministic geo/proximity layer needs for one search. */
+type GeoContext = {
+  patient: PatientLoc;
+  /** Min proximityScore to count as "within range": 3 local (same city) ·
+   *  2 regional (same state) · 0 = no distance filter. */
+  travelThr: number;
+};
+
+/** Map a travel preference to the minimum proximity score that counts as in-range.
+ *  We can only place sites at city/state granularity (no true mileage without
+ *  geocoding), so we map conservatively: local (~25mi) → at least same state,
+ *  regional (~100mi) → at least same country, any → 0 (no distance filter).
+ *  This is what excludes out-of-state trials from a "stay near home" search. */
+function travelThreshold(t: "local" | "regional" | "any" | null): number {
+  return t === "local" ? 2 : t === "regional" ? 1 : 0;
+}
 
 const US_STATES: Record<string, string> = {
   al: "alabama", ak: "alaska", az: "arizona", ar: "arkansas", ca: "california",
@@ -212,13 +288,15 @@ const STATE_ABBR: Record<string, string> = Object.fromEntries(
   Object.entries(US_STATES).map(([abbr, name]) => [name, abbr]),
 );
 
-/** Pull the patient's location from the profile fields into a token set
-    (city + state name + US state abbreviation) for approximate proximity. */
-function derivePatientLoc(fields: { label: string; value: string }[]): PatientLoc {
-  const raw = fields
+/** Pull the patient's location into a token set (city + state name + US state
+    abbreviation) for approximate proximity. The explicitly-entered survey
+    location wins; profile fields read from the note are a fallback. */
+function derivePatientLoc(fields: { label: string; value: string }[], explicit?: string): PatientLoc {
+  const fromFields = fields
     .filter((f) => /location|city|state|region|geograph|reside|home/i.test(f.label))
     .map((f) => f.value)
     .join(", ");
+  const raw = [explicit ?? "", fromFields].filter(Boolean).join(", ");
   const tokens = new Set<string>();
   for (const part of raw.split(/[,/;]/)) {
     const p = part.trim().toLowerCase().replace(/\./g, "");
@@ -227,9 +305,24 @@ function derivePatientLoc(fields: { label: string; value: string }[]): PatientLo
     for (const w of p.split(/\s+/)) if (w.length >= 2) tokens.add(w);
   }
   // expand state abbreviation ↔ full name in both directions
+  let isUS = false;
   for (const t of Array.from(tokens)) {
-    if (US_STATES[t]) tokens.add(US_STATES[t]);
-    if (STATE_ABBR[t]) tokens.add(STATE_ABBR[t]);
+    if (US_STATES[t]) {
+      tokens.add(US_STATES[t]);
+      isUS = true;
+    }
+    if (STATE_ABBR[t]) {
+      tokens.add(STATE_ABBR[t]);
+      isUS = true;
+    }
+  }
+  // A recognized US state implies the country — otherwise "regional" (country-level)
+  // proximity can never match, since the patient rarely types out a country.
+  // CT.gov reports US sites with country "United States".
+  if (isUS) {
+    tokens.add("united states");
+    tokens.add("usa");
+    tokens.add("us");
   }
   return { tokens, known: tokens.size > 0 };
 }
@@ -268,7 +361,8 @@ function burdenProxy(trial: Trial): number {
   return phaseToRank(trial.phase) <= 1 ? 2 : 1;
 }
 
-function computeFactors(trial: Trial, patient: PatientLoc): DecisionFactors {
+function computeFactors(trial: Trial, geo: GeoContext): DecisionFactors {
+  const { patient, travelThr } = geo;
   let best = 0;
   let nearest = "";
   for (const loc of trial.locations) {
@@ -278,7 +372,14 @@ function computeFactors(trial: Trial, patient: PatientLoc): DecisionFactors {
       nearest = siteLabel(loc);
     }
   }
+  const hasPlaceableSite = trial.locations.some((l) => l.city || l.state || l.country);
   if (!nearest) nearest = trial.locations[0] ? siteLabel(trial.locations[0]) : "No site listed";
+
+  // withinRange is only a real yes/no when we ran distance filtering (patient
+  // location known + a distance preference set). Otherwise it's null = "not filtered".
+  const filtering = patient.known && travelThr > 0;
+  const withinRange = filtering ? best >= travelThr : null;
+
   return {
     phaseRank: phaseToRank(trial.phase),
     randomized: trial.randomized || trial.masked,
@@ -286,7 +387,34 @@ function computeFactors(trial: Trial, patient: PatientLoc): DecisionFactors {
     nearestSite: nearest,
     proximityScore: best,
     burdenProxy: burdenProxy(trial),
+    withinRange,
+    locationUnknown: !hasPlaceableSite,
+    enrollmentWindow: enrollmentWindow(trial),
   };
+}
+
+/* ---- enrollment window (P1.1) — best-estimate, explicitly labeled ----
+   CT.gov has no clean "enrollment close" field. For a recruiting study we know
+   enrollment is open now; the primary completion date is the closest published
+   upper bound on how long there is to get in. We surface it AS an estimate. */
+function enrollmentWindow(trial: Trial): string {
+  const recruiting = trial.overallStatus.toUpperCase() === "RECRUITING";
+  const bound = trial.primaryCompletionDate || trial.completionDate;
+  const boundLabel = fmtMonthYear(bound);
+  if (recruiting && boundLabel) return `Open now · est. closes before ~${boundLabel}`;
+  if (recruiting) return "Open now · estimated close date not published";
+  if (boundLabel) return `Est. closes before ~${boundLabel}`;
+  return "";
+}
+
+/** "2026-03-31" or "2026-03" → "Mar 2026". Returns "" for empty/malformed input. */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function fmtMonthYear(date: string): string {
+  const m = /^(\d{4})-(\d{2})/.exec(date.trim());
+  if (!m) return "";
+  const year = m[1];
+  const monthIdx = Number(m[2]) - 1;
+  return monthIdx >= 0 && monthIdx < 12 ? `${MONTHS[monthIdx]} ${year}` : year;
 }
 
 function ratio(m: TrialMatch): number {

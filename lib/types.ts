@@ -6,6 +6,14 @@
    return; the types here describe what the UI consumes after normalization.
    ========================================================================== */
 
+/** A contact for a trial or site (central or per-site), from ClinicalTrials.gov. */
+export type TrialContact = {
+  name: string;
+  role: string; // "CONTACT" | "PRINCIPAL_INVESTIGATOR" | …
+  phone: string;
+  email: string;
+};
+
 /** One recruiting site for a trial, pulled live from ClinicalTrials.gov. */
 export type TrialLocation = {
   facility: string;
@@ -13,6 +21,8 @@ export type TrialLocation = {
   state: string;
   country: string;
   status: string;
+  /** Per-site contacts, when the registry lists them (Connect §6). */
+  contacts: TrialContact[];
 };
 
 /** A trial normalized from a ClinicalTrials.gov v2 study record. */
@@ -34,6 +44,22 @@ export type Trial = {
   /** Deep link to the study on ClinicalTrials.gov. */
   url: string;
 
+  /* ---- timing signals (statusModule) — power the enrollment-window estimate ---- */
+  /** Study start date, "YYYY-MM" or "YYYY-MM-DD", or "" if unpublished. */
+  startDate: string;
+  /** Primary completion (last primary-outcome measurement) date, or "". */
+  primaryCompletionDate: string;
+  /** Overall study completion date, or "". */
+  completionDate: string;
+  /** Registry record last-update post date, "YYYY-MM-DD" or "" — powers the
+   *  Connect §6 staleness warning ("last updated N months ago"). */
+  lastUpdatePostDate: string;
+  /** Which registry this record came from — "ClinicalTrials.gov" today. */
+  registry: string;
+
+  /** Central study contacts (name/phone/email), for Connect §6 routing. */
+  contacts: TrialContact[];
+
   /* ---- design signals that power the decision-support layer ---- */
   /** true when the study allocates participants randomly (arm not chosen by you). */
   randomized: boolean;
@@ -54,11 +80,16 @@ export type Trial = {
  *  fails = not met. "clear" is an exclusion that is NOT triggered. */
 export type Verdict = "meets" | "clear" | "confirm" | "fails";
 
+/** Where the evidence for a criterion's judgment came from (Connect §3).
+ *  "not_documented" = nothing in the record addresses it (pairs with "confirm"). */
+export type CriterionProvenance = "fhir" | "note" | "you" | "not_documented";
+
 export type Criterion = {
   kind: "incl" | "excl";
   verdict: Verdict;
   requirement: string;
   evidence: string;
+  provenance: CriterionProvenance;
 };
 
 /** Overall standing of a trial for this patient. "screened" = passed structural
@@ -91,6 +122,14 @@ export type DecisionFactors = {
   proximityScore: number;
   /** Rough 0 (low) … 2 (higher) burden estimate from study type + phase. Approximate. */
   burdenProxy: number;
+  /** true when the closest listed site is within the patient's chosen travel radius.
+   *  null when no distance preference was set or the patient location is unknown. */
+  withinRange: boolean | null;
+  /** true when the trial lists no site we could place against the patient's location. */
+  locationUnknown: boolean;
+  /** Human-readable, explicitly-estimated enrollment window, e.g.
+   *  "Open now · est. closes ~Mar 2026". "" when no dates are published. */
+  enrollmentWindow: string;
 };
 
 /** A trial plus its per-criterion reasoning and decision-support layer —
