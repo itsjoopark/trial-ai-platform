@@ -1,5 +1,21 @@
 import type { Metadata } from "next";
+import { Manrope, Newsreader } from "next/font/google";
 import "./globals.css";
+
+// Trial design system (design.md §4). Manrope is the app-wide sans; loaded as a
+// variable font so the app's in-between weights (560/640/680) render true.
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-manrope",
+  display: "swap",
+});
+// Newsreader italic — editorial serif for emphasis inside display headlines.
+const newsreader = Newsreader({
+  subsets: ["latin"],
+  style: ["italic"],
+  variable: "--font-newsreader",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Trial — demo clinical trial matcher",
@@ -13,7 +29,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   // Light is the default theme; the in-app toggle stamps data-theme on <html>.
   return (
-    <html lang="en" data-theme="light">
+    <html lang="en" data-theme="light" className={`${manrope.variable} ${newsreader.variable}`}>
       <body>{children}</body>
     </html>
   );

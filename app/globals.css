@@ -34,13 +34,16 @@
   --eligible:#1f8a54; --eligible-bg:#e3f2e9; --near:#c33b30; --near-bg:#f9e5e2; --uncertain:#b27a12; --uncertain-bg:#f7eed9;
   --halo:#EAF2F0;
 
+  /* type — Manrope is the app-wide sans (design.md §4); mono still carries all
+     clinical data; Newsreader italic is editorial emphasis inside headlines. */
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
-  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --sans:var(--font-manrope),system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-serif:var(--font-newsreader),Georgia,"Times New Roman",serif;
   /* radius — legacy scale (in use). design.md §5 canonical radii exposed
      alongside for the Phase 3 component migration. */
   --radius:10px;
-  --r-sm:10px;   /* small controls: buttons, chips, inputs */
-  --r:14px;      /* cards / panels */
+  --r-sm:10px;   /* small controls: chips, misc */
+  --r:16px;      /* cards / panels (design.md §5 card radius) */
   --r-lg:18px;   /* prominent surfaces */
   --radius-input:8px; --radius-btn:12px; --radius-card:16px; --radius-tile:24px; --radius-pill:999px;
   /* motion — strong custom curves (skill §1); --ease-out/--ease-in-out already match */
@@ -49,7 +52,7 @@
   --ease-in-out:cubic-bezier(.77,0,.175,1);  /* on-screen movement */
   --ease-drawer:cubic-bezier(.32,.72,0,1);   /* sheets and drawers */
   --dur-press:140ms; --dur-fast:200ms; --dur-slow:300ms;
-  --t-press:130ms;  /* button press feedback */
+  --t-press:140ms;  /* button press feedback (skill §0: 100–160ms, --ease-out) */
   --t-hover:180ms;  /* hover color/border settle */
 }
 :root[data-theme="dark"] {
@@ -160,21 +163,33 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 /* landing */
 .hero{padding:6vh 0 0;}
 .hero .k{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--agent-2);}
-.hero h1{font-size:clamp(24px,4.5vw,34px);line-height:1.12;letter-spacing:-.025em;margin:14px 0 10px;font-weight:680;text-wrap:balance;opacity:0;transform:translateY(6px);}
+.hero h1{font-size:clamp(32px,4.5vw,44px);line-height:1.1;letter-spacing:-.02em;margin:14px 0 10px;font-weight:600;text-wrap:balance;opacity:0;transform:translateY(6px);}
 .hero h1.in{animation:reveal .52s var(--ease) forwards;}
+
+/* type scale — design.md §4. Display headlines take Manrope 600 + tight tracking;
+   editorial serif italic (Newsreader) is available for emphasis inside them.
+   Body prose gets text-wrap:pretty. Base body size stays functional for the
+   data-dense tool (design.md's 17px body is flagged, not applied globally). */
+.home-hero h1 em,.hero h1 em,.legal-head h1 em{font-family:var(--font-serif);font-style:italic;font-weight:500;letter-spacing:-.01em;}
+.home-lede,.board-sub,.legal-lede,.hero p{text-wrap:pretty;}
 .hero p{color:var(--ink-2);font-size:15px;max-width:56ch;margin:0 0 22px;}
-.paste{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;transition:border-color var(--t-hover) var(--ease),box-shadow var(--t-hover) var(--ease);}
-.paste:focus-within{border-color:var(--agent);box-shadow:0 0 0 3px var(--agent-soft);}
+.paste{background:var(--surface-sunken);border:1px solid transparent;border-radius:var(--r);padding:14px;transition:border-color var(--t-hover) var(--ease),box-shadow var(--t-hover) var(--ease);}
+.paste:focus-within{border-color:transparent;box-shadow:0 0 0 2px var(--blue);}
 .paste textarea{width:100%;min-height:88px;resize:vertical;border:0;background:transparent;outline:0;color:var(--ink);font-family:var(--sans);font-size:14.5px;line-height:1.55;}
 .paste textarea::placeholder{color:var(--ink-3);}
 .paste .row{display:flex;align-items:center;gap:10px;margin-top:8px;padding-top:10px;border-top:1px solid var(--line-soft);flex-wrap:wrap;}
 .paste .paste-err{margin:8px 0 0;font-size:12.5px;color:var(--near);line-height:1.4;}
 .paste .row .hint{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
 .paste .row .sp{flex:1;}
-.btn{font:inherit;font-weight:560;cursor:pointer;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface-2);color:var(--ink);padding:9px 15px;display:inline-flex;align-items:center;gap:8px;}
-.btn:hover{border-color:var(--ink-3);}
-.btn.go{background:var(--agent);color:var(--agent-ink);border-color:transparent;font-weight:600;}
-.btn.go:hover{background:var(--agent-hover);}
+/* buttons — design.md §6. Secondary = transparent + 1px ink border; primary
+   (.go) = the brand gradient, one per view (the app uses one .btn.go per view). */
+.btn{font:inherit;font-weight:560;cursor:pointer;border-radius:var(--radius-btn);border:1px solid var(--ink);background:transparent;color:var(--ink);padding:9px 15px;display:inline-flex;align-items:center;gap:8px;}
+.btn:hover{background:color-mix(in srgb,var(--ink) 6%,transparent);}
+.btn.go{background:var(--gradient);color:#fff;border-color:transparent;font-weight:600;}
+.btn.go:hover{background:var(--gradient);filter:brightness(1.05);}
+/* the hover-lift is a transform → gate behind real hover so it can't stick on
+   touch (skill §5). The brightness flash is harmless and stays ungated. */
+@media (hover:hover) and (pointer:fine){.btn.go:hover{transform:translateY(-1px);}}
 .chips{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px;}
 .chip{font:inherit;font-size:13px;color:var(--ink-2);background:transparent;border:1px dashed var(--line);border-radius:999px;padding:7px 13px;cursor:pointer;display:inline-flex;gap:7px;align-items:center;}
 .chip:hover{border-color:var(--agent);color:var(--ink);border-style:solid;}
@@ -184,7 +199,7 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 .home-col{padding-top:min(10vh,72px);padding-bottom:40px;}
 .home-hero{margin:0 0 24px;}
 .home-kicker{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--agent-2);margin:0 0 12px;}
-.home-hero h1{font-size:clamp(28px,5vw,40px);line-height:1.1;letter-spacing:-.03em;margin:0 0 14px;font-weight:680;text-wrap:balance;max-width:18ch;}
+.home-hero h1{font-size:clamp(40px,6vw,64px);line-height:1.05;letter-spacing:-.02em;margin:0 0 14px;font-weight:600;text-wrap:balance;max-width:18ch;}
 .home-lede{color:var(--ink-2);font-size:16px;line-height:1.6;margin:0;max-width:58ch;}
 .home-actions{margin-top:4px;}
 .home-cta{font-size:15px;padding:11px 18px;}
@@ -195,7 +210,7 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 .home-product__inner{max-width:960px;margin:0 auto;}
 .home-product__head{margin:0 0 18px;}
 .home-product__kicker{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px;}
-.home-product__head h2{margin:0;font-size:clamp(18px,2.8vw,22px);font-weight:650;letter-spacing:-.02em;}
+.home-product__head h2{margin:0;font-size:clamp(26px,2.8vw,32px);font-weight:600;letter-spacing:-.01em;line-height:1.15;}
 .product-carousel{position:relative;--per-view:3;--pages:2;}
 .product-carousel__viewport{overflow:hidden;width:100%;}
 .product-carousel__track{display:flex;width:calc(var(--pages) * 100%);transition:transform .42s var(--ease);}
@@ -339,8 +354,8 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 /* composer */
 .composer{border-top:1px solid var(--line);padding:14px 22px;background:var(--bg-2);flex:none;}
 .cwrap{max-width:760px;margin:0 auto;}
-.cbox{display:flex;gap:9px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:8px 8px 8px 14px;transition:border-color var(--t-hover) var(--ease),box-shadow var(--t-hover) var(--ease);}
-.cbox:focus-within{border-color:var(--agent);box-shadow:0 0 0 3px var(--agent-soft);}
+.cbox{display:flex;gap:9px;align-items:center;background:var(--surface-sunken);border:1px solid transparent;border-radius:var(--r);padding:8px 8px 8px 14px;transition:border-color var(--t-hover) var(--ease),box-shadow var(--t-hover) var(--ease);}
+.cbox:focus-within{border-color:transparent;box-shadow:0 0 0 2px var(--blue);}
 .cbox input{flex:1;border:0;background:transparent;outline:0;color:var(--ink);font-family:var(--sans);font-size:14px;}
 .cbox .k{font-family:var(--mono);font-size:10px;color:var(--ink-3);}
 .send{width:32px;height:32px;border-radius:8px;border:0;background:var(--agent);color:var(--agent-ink);cursor:pointer;display:grid;place-items:center;flex:none;font-size:15px;}
@@ -390,7 +405,10 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 
 /* disabled buttons during async work */
 .btn:disabled,.btn.go:disabled{opacity:.55;cursor:default;}
-.btn.go:disabled:hover{background:var(--agent);}
+.btn.go:disabled:hover{background:var(--gradient);filter:none;transform:none;}
+/* keep the press-scale feedback on the primary (its hover transform would
+   otherwise out-specify the global button:active rule) */
+.btn.go:active:not(:disabled){transform:scale(.97);}
 
 /* ledger criterion detail (kind tag + cited evidence) */
 .crow .ck.excl{background:var(--agent);color:var(--agent-ink);border-radius:4px;padding:1px 5px;}
@@ -542,7 +560,7 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 .board{max-width:760px;margin:0 auto;padding:30px 30px 44px;width:100%;}
 .board--results{max-width:860px;}
 .board-head{display:flex;align-items:baseline;gap:10px;margin:0 0 6px;flex-wrap:wrap;}
-.board-head h2{font-size:22px;font-weight:680;letter-spacing:-.02em;margin:0;}
+.board-head h2{font-size:22px;font-weight:600;letter-spacing:-.01em;line-height:1.3;margin:0;}
 .board-sub{color:var(--ink-2);font-size:14px;line-height:1.55;margin:0 0 16px;max-width:66ch;}
 .board-sub b{color:var(--ink);font-weight:600;}
 
@@ -666,7 +684,7 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
 .legal-inner{max-width:760px;margin:0 auto;}
 .legal-eyebrow{font-family:var(--mono);font-size:12px;margin:0 0 20px;}
 .legal-head{margin:0 0 22px;padding-bottom:18px;border-bottom:1px solid var(--line);}
-.legal-head h1{font-size:clamp(26px,4vw,34px);font-weight:680;letter-spacing:-.025em;margin:0 0 12px;}
+.legal-head h1{font-size:clamp(32px,4vw,44px);font-weight:600;letter-spacing:-.02em;line-height:1.1;margin:0 0 12px;}
 .legal-lede{font-size:15.5px;line-height:1.6;color:var(--ink-2);margin:0 0 12px;max-width:64ch;}
 .legal-meta{font-size:12.5px;line-height:1.55;color:var(--ink-3);margin:0;max-width:64ch;}
 .legal-callout{background:var(--uncertain-bg);border:1px solid color-mix(in srgb,var(--uncertain) 38%,var(--line));border-radius:var(--r-sm);padding:12px 15px;font-size:13px;line-height:1.55;color:var(--ink);margin:0 0 26px;}
@@ -1064,3 +1082,18 @@ button:active:not(:disabled){transform:scale(.97);}   /* nothing responsive stay
   .packet{border:none;}
   .packet-head button{display:none;}
 }
+
+/* ============================================================================
+   Phase 3 (design.md §6) — form inputs normalized to the design system:
+   sunken fill, no border at rest, 8px radius, 2px --blue focus ring. Placed
+   last so it settles the per-field focus styles. Compact inline fields keep
+   their height; the roomy form fields get a 44px min hit target.
+   ========================================================================== */
+.sq-loc-input,.chiprow__zip,.cf-input,.sb-search,.prow-input,.fork-opt__input{
+  background:var(--surface-sunken);border:1px solid transparent;border-radius:var(--radius-input);
+}
+.sq-loc-input:focus,.chiprow__zip:focus,.cf-input:focus,.sb-search:focus,.prow-input:focus{
+  outline:none;border-color:transparent;box-shadow:0 0 0 2px var(--blue);
+}
+.fork-opt__input:focus-visible{outline:none;box-shadow:0 0 0 2px var(--blue);}
+.sq-loc-input,.cf-input{min-height:44px;}
