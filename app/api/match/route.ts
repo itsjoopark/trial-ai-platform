@@ -24,6 +24,7 @@ import { LedgerSchema } from "@/lib/schemas";
 import { searchRegistries } from "@/lib/registries";
 import type { StudyTypeKey } from "@/lib/ctgov";
 import { VERDICT_RULES, deriveStatus, metCountOf } from "@/lib/verdict";
+import { margaretDemoMatch } from "@/lib/demoMatch";
 import type { Trial, TrialMatch, MatchStatus, Criterion, DecisionFactors } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -89,6 +90,10 @@ type MatchBody = {
   studyTypes?: string[];
   /** Who's filling this out (§5.3) — changes the brief/headline voice only. */
   entrant?: string;
+  /** Demo hook: the "Try a sample patient (Margaret)" flow sends "margaret" to
+   *  get a deterministic, curated result (see lib/demoMatch). Any other input
+   *  ignores this and runs the real live pipeline. */
+  demo?: string;
 };
 
 const VALID_STUDY_TYPES: StudyTypeKey[] = ["treatment", "tests", "observational", "expanded"];
@@ -102,6 +107,12 @@ export async function POST(req: Request) {
     profile = (await req.json()) as MatchBody;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  // Deterministic demo result for the sample patient — instant, always ≥3
+  // eligible, no model call. Only this explicit flag triggers it.
+  if (profile.demo === "margaret") {
+    return NextResponse.json(margaretDemoMatch(profile.summary));
   }
 
   const cond = (profile.conditionQuery ?? "").trim();

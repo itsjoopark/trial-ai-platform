@@ -231,6 +231,9 @@ export default function Page() {
   // "Your next steps" panel for when the patient doesn't have the info yet.
   const [recheck, setRecheck] = useState<{ busy: boolean; note: string | null }>({ busy: false, note: null });
   const [showNextSteps, setShowNextSteps] = useState(false);
+  // true only when the "Try a sample patient (Margaret)" chip was used — routes
+  // /api/match to the deterministic demo result (lib/demoMatch).
+  const [demoSample, setDemoSample] = useState(false);
 
   const appRef = useRef<HTMLDivElement>(null);
 
@@ -259,6 +262,7 @@ export default function Page() {
     setNote("");
     setOrigin("note");
     setSourceLabel("");
+    setDemoSample(false);
     setProfile(null);
     setAnswers({});
     setStep(0);
@@ -290,10 +294,11 @@ export default function Page() {
   }
 
   // Paste / describe path — the universal funnel every text entry point uses.
-  async function readNote(text: string) {
+  async function readNote(text: string, demo = false) {
     const t = text.trim();
     if (!t) return;
     resetIntake();
+    setDemoSample(demo);
     setNote(t);
     setPhase("capture");
     setBusy(true);
@@ -421,6 +426,7 @@ export default function Page() {
           travel: survey.travel,
           studyTypes: Array.from(studyTypes),
           entrant,
+          demo: demoSample ? "margaret" : undefined,
         }),
       });
       const data = await res.json();
@@ -753,6 +759,7 @@ export default function Page() {
                 note={note}
                 setNote={setNote}
                 onRead={readNote}
+                onSample={() => readNote(SAMPLE_NOTE, true)}
                 onPdf={readPdf}
                 onConnect={() => setPhase("connect")}
                 studyTypes={studyTypes}
@@ -977,7 +984,7 @@ function Home({
   const copy = {
     patient: {
       kicker: "Patient portal",
-      title: "See which clinical trials you may qualify for — and why.",
+      title: "See which clinical trials you may qualify for and why.",
       lede: "Describe your situation, upload a note, or connect your medical records (SMART on FHIR). Trial structures it, screens live against recruiting studies on ClinicalTrials.gov, and shows the inclusion and exclusion reasoning for every match.",
       cta: "Enter patient portal →",
     },
@@ -1120,6 +1127,7 @@ function Landing({
   note,
   setNote,
   onRead,
+  onSample,
   onPdf,
   onConnect,
   studyTypes,
@@ -1132,6 +1140,7 @@ function Landing({
   note: string;
   setNote: (s: string) => void;
   onRead: (s: string) => void;
+  onSample: () => void;
   onPdf: (f: File) => void;
   onConnect: () => void;
   studyTypes: Set<StudyTypeKey>;
@@ -1160,7 +1169,7 @@ function Landing({
             {greeting}
           </h1>
           <p className="hero-lede">
-            Share your notes or describe your situation — I&apos;ll screen you live against recruiting ClinicalTrials.gov studies and show the
+            Share your notes or describe your situation. I&apos;ll screen you live against recruiting ClinicalTrials.gov studies and show the
             reasoning behind every match. It takes about two minutes:
           </p>
           <ol className="hero-steps" aria-label="How it works">
@@ -1244,7 +1253,7 @@ function Landing({
           />
 
           <div className="chips">
-            <button className="chip" onClick={() => onRead(SAMPLE_NOTE)}>
+            <button className="chip" onClick={onSample}>
               <span className="s">demo</span> Try a sample patient (Margaret)
             </button>
           </div>
@@ -2299,7 +2308,7 @@ function printPacket(cls: string) {
 const REFER_SECTIONS: { id: string; label: string }[] = [
   { id: "refer-elig", label: "Eligibility" },
   { id: "refer-ready", label: "Before you call" },
-  { id: "refer-contacts", label: "Contacts" },
+  { id: "refer-note", label: "Doctor note" },
   { id: "refer-auth", label: "Refer" },
   { id: "refer-timeline", label: "Timeline" },
 ];
@@ -2346,8 +2355,11 @@ function Refer({
             </p>
             <div className="auth-demo">Demo: no data was actually sent.</div>
           </div>
+          {/* "Who to contact" now lives on the prepared screen (Packet A moved to the
+              pre-referral screen). Packet B stays inside #refer-packets so its single-
+              packet print still works. */}
+          <ContactRouting trial={trial} />
           <div id="refer-packets">
-            <PacketA trial={trial} />
             <PacketB trial={trial} profile={profile} />
           </div>
         </div>
@@ -2385,7 +2397,11 @@ function Refer({
 
         <EligibilityTable trial={trial} />
         <ReadinessChecklist gaps={gaps} />
-        <ContactRouting trial={trial} />
+        {/* Packet A (the note to your OWN doctor) belongs before you authorize — get your
+            care team's buy-in first. "Who to contact" moves to the prepared screen. */}
+        <div id="refer-note">
+          <PacketA trial={trial} />
+        </div>
         <ReferralAuthorization trial={trial} profile={profile} onAuthorize={() => setReferred(true)} />
         <ReferTimeline gaps={gaps} trial={trial} />
       </div>
@@ -2796,7 +2812,12 @@ function Results({
   const ruledOut = matches.filter((m) => m.status === "near" && facet(m) && statusOk(m));
   const screened = matches.filter((m) => m.status === "screened" && facet(m) && statusOk(m));
 
-  const ordered = active ? [...consider].sort((a, b) => prefScore(b, prefs) - prefScore(a, prefs) || ratioOf(b) - ratioOf(a)) : consider;
+  // Fully-eligible studies always rank first for clear visibility; within the same
+  // status, the existing preference/fit ranking still applies.
+  const statusRank = (m: TrialMatch) => (m.status === "eligible" ? 0 : 1);
+  const ordered = [...consider].sort(
+    (a, b) => statusRank(a) - statusRank(b) || (active ? prefScore(b, prefs) - prefScore(a, prefs) : 0) || ratioOf(b) - ratioOf(a),
+  );
 
   // Geography: when the server actually ran distance filtering, split the ranked
   // list into within-range and farther. Nothing is dropped — far trials collapse below.
@@ -2990,9 +3011,35 @@ function Results({
         {ruledOut.length > 0 && (statusFilter === "all" || statusFilter === "near") && (
           <>
             <div className="section-h">
-              Ruled out <span>— listed in full, fails closed</span>
+              Ruled out ({ruledOut.length}) <span>— collapsed; open one to see why it fails</span>
             </div>
-            {ruledOut.map(card)}
+            {ruledOut.map((m) => (
+              <details key={m.nctId} className="ruled-collapse">
+                <summary className="ruled-summary">
+                  <span className="ruled-chev" aria-hidden>
+                    ▶
+                  </span>
+                  <span className="ruled-dot" aria-hidden />
+                  <span className="ruled-tag">Ruled out</span>
+                  <span className="mono ruled-nct">{m.nctId}</span>
+                  <span className="ruled-title">{m.title}</span>
+                  <span className="mono ruled-phase">{m.phase}</span>
+                </summary>
+                <div className="ruled-body">
+                  <DecisionCard
+                    m={m}
+                    saved={saved.has(m.nctId)}
+                    onSave={() => onToggleSave(m.nctId)}
+                    reasons={active ? prefReasons(m, prefs) : []}
+                    flash={flash === m.nctId}
+                    onResolve={onResolve}
+                    onOpenNextSteps={onOpenNextSteps}
+                    onRefer={onRefer}
+                    hideHead
+                  />
+                </div>
+              </details>
+            ))}
           </>
         )}
 
@@ -3038,6 +3085,7 @@ const DecisionCard = memo(function DecisionCard({
   onResolve,
   onOpenNextSteps,
   onRefer,
+  hideHead = false,
 }: {
   m: TrialMatch;
   saved: boolean;
@@ -3047,6 +3095,7 @@ const DecisionCard = memo(function DecisionCard({
   onResolve: (nctId: string, critIndex: number, answer: string) => Promise<boolean>;
   onOpenNextSteps: () => void;
   onRefer: (nctId: string) => void;
+  hideHead?: boolean;
 }) {
   const label = m.status === "eligible" ? "Eligible" : m.status === "uncertain" ? "Needs info" : "Ruled out";
   const near = m.status === "near";
@@ -3065,6 +3114,7 @@ const DecisionCard = memo(function DecisionCard({
 
   return (
     <div id={`trial-${m.nctId}`} className={`dcard ${m.status}${flash ? " flash" : ""}`}>
+      {!hideHead && (
       <div className="dc-head">
         <div className="dc-title">
           {/* Verdict leads the card — always visible, reinforced by the left status rail. */}
@@ -3104,6 +3154,7 @@ const DecisionCard = memo(function DecisionCard({
           </button>
         )}
       </div>
+      )}
 
       {m.headline && <div className="headline">{m.headline}</div>}
 
