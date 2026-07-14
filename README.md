@@ -7,7 +7,7 @@ sourced for **every** match. The intake speaks to you in plain language; the out
 clinical, framed as *"what to bring to your care team."* Built for the Cerebral Valley × Anthropic ×
 Gladstone "Build Beyond the Bench" hackathon.
 
-[![Watch the video](https://youtu.be/RlR9nHIMiyA)](https://youtu.be/RlR9nHIMiyA)
+[![Trialign demo video](https://img.youtube.com/vi/RlR9nHIMiyA/maxresdefault.jpg)](https://youtu.be/RlR9nHIMiyA)
 
 > Informational support for a conversation with your care team — not medical advice or a final
 > eligibility determination. Trial data is pulled live from ClinicalTrials.gov. Use synthetic
